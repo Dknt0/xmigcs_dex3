@@ -1,0 +1,74 @@
+# 站立/迈步策略 (HumanoidStand, policy_msl)
+# 移植自 bitbot_gz checkpoint/dex/policy_msl.onnx + robot_dex.yaml policy_standing
+# ovinf 实现: ovinf_humanoid_stand.cc
+model_path: "policy_msl.onnx"
+motor_num: 29        # 电机数量
+actions_size: 15     # action的大小(仅腿+腰, 手臂不在策略内)
+dt: 0.01             # 控制循环周期 (100Hz FSM)
+warm_start_time: 0.3
+
+# 训练(Isaaclab)关节顺序, 决定观测/动作向量的索引, 不可改动
+joint_names: [
+  hip_pitch_l_joint, hip_roll_l_joint, hip_yaw_l_joint,
+  knee_pitch_l_joint, ankle_pitch_l_joint, ankle_roll_l_joint,
+  hip_pitch_r_joint, hip_roll_r_joint, hip_yaw_r_joint,
+  knee_pitch_r_joint, ankle_pitch_r_joint, ankle_roll_r_joint,
+  waist_yaw_joint, waist_roll_joint, waist_pitch_joint
+]
+
+control:
+  action_scale: 0.25
+  decimation: 1                  # 100Hz 策略频率 (control_period 0.01)
+  warm_start_time: 0.3
+  cycle_time: 0.9                # 步态时钟周期(s), ovinf cycle_time
+  stand_threshold: 0.045         # 命令范数超过该值启动时钟
+
+normalization:
+  clip_scales:
+    clip_observations: 100.0
+    clip_actions: 18.0           # ovinf_humanoid_stand.cc clip_action
+  obs_scales:
+    lin_vel: 2.0
+    ang_vel: 1.0
+    command: 1.0
+    dof_pos: 1.0
+    dof_vel: 0.05
+    proj_gravity: 1.0
+
+size:
+  num_hist: 15                   # 本体感知历史帧数
+  observations_size: 56          # 单帧观测 = 2 + 3 + 15*3 + 3 + 3
+
+# 增益(29维, mujoco xml 顺序, 即下方 joint_xml 顺序) — robot_dex.yaml default_p/d_gains
+gains:
+  kp: [
+    200.0, 200.0, 150.0, 200.0, 30.0, 16.8,     # 左腿
+    200.0, 200.0, 150.0, 200.0, 30.0, 16.8,     # 右腿
+    300.0, 300.0, 300.0,                        # 腰
+    100.0, 50.0, 50.0, 100.0, 50.0, 20.0, 20.0, # 左臂
+    100.0, 50.0, 50.0, 100.0, 50.0, 20.0, 20.0  # 右臂
+  ]
+  kd: [
+    10.0, 10.0, 7.5, 10.0, 3.75, 2.1,
+    10.0, 10.0, 7.5, 10.0, 3.75, 2.1,
+    7.5, 7.5, 7.5,
+    5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0,
+    5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0
+  ]
+
+# 策略内15关节的训练默认角(joint_names 顺序)
+init_state:
+  default_joint_angles: [
+    -0.25, 0.0, 0.0, 0.5, -0.25, 0.0,
+    -0.25, 0.0, 0.0, 0.5, -0.25, 0.0,
+    0.0, 0.0, 0.0
+  ]
+
+# 策略外关节(手臂/手腕)的保持角(29维, mujoco xml 顺序) — robot_dex.yaml defult_init_pos
+hold_joint_angles: [
+  -0.25, 0.0, 0.0, 0.5, -0.25, 0.0,
+  -0.25, 0.0, 0.0, 0.5, -0.25, 0.0,
+  0.0, 0.0, 0.0,
+  0.1, 0.3, 0.0, -0.4, 0.0, 0.0, 0.0,
+  0.1, -0.3, 0.0, -0.4, 0.0, 0.0, 0.0
+]
