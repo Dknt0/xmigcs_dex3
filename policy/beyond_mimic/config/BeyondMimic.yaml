@@ -1,6 +1,11 @@
 # onnx_path: "policy_fightAndSports1_s1.onnx"
 # onnx_path: "policy-dance.onnx"
-onnx_path: "lastdance_onlycom.onnx"
+# onnx_path: "lastdance_onlycom.onnx"
+# onnx_path: "008.onnx"
+onnx_path: "xiaotou.onnx"
+# onnx_path: "xiaotou_2.onnx"
+# Extra onboard experiment models are kept in model/ but disabled by default.
+# Switch this field only after confirming policy provenance and target pose.
 warm_start_time: 0.0
 
 body_names : [
@@ -53,9 +58,9 @@ kps: [
         150, 50, 50, 150,150,200,200,
 ]
 kds: [
-        10, 10, 5, 10, 5.0, 2.0,
-        10, 10, 5, 10, 5.0, 2.0,
-        5, 10, 10,
+        15, 15, 7.5, 15, 3.75, 2.1,
+        15, 15, 7.5, 15, 3.75, 2.1,
+        10, 15, 15,
         5, 2.5, 2.5, 5,5,2,2,
         5, 2.5, 2.5, 5,5,2,2,
 ]

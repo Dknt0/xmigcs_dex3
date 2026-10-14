@@ -16,6 +16,7 @@ import onnxruntime as ort
 import os
 import yaml
 
+from common.control_timing import TickDecimator
 from FSM.fsm_base import FSMState, FSMStateName
 from common.joystick import ControlFlag
 from common.robot_data import RobotData
@@ -43,6 +44,8 @@ class FSMStateSTAND(FSMState):
         control_config = policy_config.get('control', {})
         self.action_scale_ = control_config.get('action_scale')
         self.decimation_ = control_config.get('decimation')
+        self._inference_clock = TickDecimator(
+            self.decimation_, self.dt_, self.robot_data_.control_dt_)
         self.warm_start_time_ = control_config.get('warm_start_time', 0.3)
         self.cycle_time_ = control_config.get('cycle_time', 0.9)
         self.stand_threshold_ = control_config.get('stand_threshold', 0.045)
@@ -140,10 +143,12 @@ class FSMStateSTAND(FSMState):
             print(f"[FSMStateSTAND-ONNX] ONNX model loaded successfully: {self.model_path}")
         except Exception as e:
             print(f"[FSMStateSTAND] Failed to load ONNX model: {e}")
+            raise RuntimeError(f"Failed to load ONNX model: {e}")
             self.ort_session_ = None
 
     def on_enter(self):
         """进入STAND: 历史清零, 时钟复位(同 ovinf WarmUp)"""
+        self._inference_clock.reset()
         self.proprio_hist_buf_.fill(0.0)
         self.last_actions_.fill(0.0)
         self.actions_.fill(0.0)
@@ -227,7 +232,7 @@ class FSMStateSTAND(FSMState):
 
     def run(self, flag: ControlFlag):
         """运行STAND状态"""
-        if int(self.robot_data_.time_now_ / self.dt_) % self.decimation_ == 0:
+        if self._inference_clock.step():
             obs_hist = self.compute_observation(flag)
             self.compute_actions(obs_hist)
 
@@ -241,14 +246,14 @@ class FSMStateSTAND(FSMState):
                 blend = self._warmup_inference_counter / float(self._warm_start_steps)
                 commanded_pos = (1.0 - blend) * self._warm_start_pose + blend * target_dof_pos_mj
 
-            base = self.robot_data_.q_d_.shape[0] - self.motor_num_
-            self.robot_data_.q_d_[base:base + len(self.joint_xml)] = commanded_pos
-            self.robot_data_.q_dot_d_[base:base + len(self.joint_xml)] = 0.0
-            self.robot_data_.tau_d_[base:base + len(self.joint_xml)] = 0.0
+            base = self.robot_data_.q_d_s_.shape[0] - self.motor_num_
+            self.robot_data_.q_d_s_[base:base + len(self.joint_xml)] = commanded_pos
+            self.robot_data_.q_dot_d_s_[base:base + len(self.joint_xml)] = 0.0
+            self.robot_data_.tau_d_s_[base:base + len(self.joint_xml)] = 0.0
             self.last_actions_[:] = self.actions_
 
-        self.robot_data_.joint_kp_p_[:len(self.joint_xml)] = self.stiffness_array
-        self.robot_data_.joint_kd_p_[:len(self.joint_xml)] = self.damping_array
+        self.robot_data_.joint_kp_s_[:len(self.joint_xml)] = self.stiffness_array
+        self.robot_data_.joint_kd_s_[:len(self.joint_xml)] = self.damping_array
 
     def on_exit(self):
         print("[FSMStateSTAND] exit")

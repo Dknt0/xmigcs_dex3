@@ -5,6 +5,8 @@ Implements the same FSM modes and control flags as `stdin_keyboard_control.py` /
 import os
 import yaml
 import threading
+import copy
+import time
 from typing import Optional
 from dataclasses import dataclass
 from sensor_msgs.msg import Joy
@@ -46,7 +48,12 @@ class XBOXMap:
 
 
 class XBOXController:
-    """XBOX controller that mirrors the joystick keyboard behavior."""
+    """XBOX adapter that mirrors joystick and keyboard behavior.
+
+    It owns only Joy decoding, button chords, and local stale-input handling.
+    RobotInterface remains the final safety gate for deciding whether walk
+    velocity commands can enter RobotData.
+    """
 
     def __init__(self):
         print("XBOX Controller Start")
@@ -65,26 +72,32 @@ class XBOXController:
         self.forward_command_offset = 0.0
         self.lateral_command_offset = 0.0
         self.rotation_command_offset = 0.0
+        self.max_forward_speed = 0.8
+        self.max_backward_speed = 0.5
+        self.max_lateral_speed = 0.4
+        self.max_rotation_speed = 0.4
+        # Missing Joy frames are treated as command loss.  The next fresh Joy
+        # frame re-enables the adapter in `xbox_flag_update`.
+        self.command_timeout_s = 0.5
+        self.last_msg_time = 0.0
 
         # smoothing
         self.height_step = 0.05
 
-        self._load_config()
         # default button map indices (can be overridden in config)
-        # verified on Xbox Series X controller (Bluetooth) 2026-08-19
         self.button_map = {
-            'a': 0, 'b': 1, 'x': 3, 'y': 4,
-            'lb': 6, 'rb': 7,  'start': 11,
-            'select': 10, 'home': 12
+            'a': 0, 'b': 1, 'x': 2, 'y': 3,
+            'lb': 4, 'rb': 5,  'start': 7,
+            'select': 6, 'home': 8
         }
-
+        
         # default axis map indices (can be overridden in config)
-        # verified on Xbox Series X controller (Bluetooth) 2026-08-19
         self.axis_map = {
-            'lx': 0, 'ly': 1, 'rx': 2, 'ry': 3,
-            'l_trigger': 5, 'r_trigger': 4,
+            'lx': 0, 'ly': 1, 'rx': 3, 'ry': 4,
+            'l_trigger': 2, 'r_trigger': 5,
             'dpad_h': 6, 'dpad_v': 7
         }
+        self._load_config()
 
     def _load_config(self):
         try:
@@ -92,29 +105,29 @@ class XBOXController:
             with open(config_path, 'r') as f:
                 cfg = yaml.safe_load(f) or {}
             xbox_cfg = cfg.get('xbox', {})
-            # override button_map if provided
-            # bm = xbox_cfg.get('button_map')
-            # if isinstance(bm, dict):
-            #     for k, v in bm.items():
-            #         try:
-            #             self.button_map[k] = int(v)
-            #         except Exception:
-            #             pass
-                        
-            # # override axis_map if provided
-            # am = xbox_cfg.get('axis_map')
-            # if isinstance(am, dict):
-            #     for k, v in am.items():
-            #         try:
-            #             self.axis_map[k] = int(v)
-            #         except Exception:
-            #             pass
+            # Allow device-specific Joy layouts without changing controller code.
+            bm = xbox_cfg.get('button_map')
+            if isinstance(bm, dict):
+                for k, v in bm.items():
+                    if k in self.button_map:
+                        self.button_map[k] = int(v)
+
+            am = xbox_cfg.get('axis_map')
+            if isinstance(am, dict):
+                for k, v in am.items():
+                    if k in self.axis_map:
+                        self.axis_map[k] = int(v)
             
             self.initial_height = xbox_cfg.get('initial_height', 0.89)
             self.forward_command_offset = xbox_cfg.get('forward_command_offset', 0.0)
             self.lateral_command_offset = xbox_cfg.get('lateral_command_offset', 0.0)
             self.rotation_command_offset = xbox_cfg.get('rotation_command_offset', 0.0)
             self.height_step = xbox_cfg.get('height_step', 0.05)
+            self.max_forward_speed = xbox_cfg.get('max_forward_speed', 0.8)
+            self.max_backward_speed = xbox_cfg.get('max_backward_speed', 0.5)
+            self.max_lateral_speed = xbox_cfg.get('max_lateral_speed', 0.4)
+            self.max_rotation_speed = xbox_cfg.get('max_rotation_speed', 0.4)
+            self.command_timeout_s = xbox_cfg.get('command_timeout_s', 0.5)
 
             self.current_height = self.initial_height
             self.target_height = self.initial_height
@@ -149,13 +162,31 @@ class XBOXController:
                 except Exception:
                     val = 0
                 setattr(self.map, name, val)
+            self.last_msg_time = time.monotonic()
 
     def xbox_flag_update(self):
-        """Update ControlFlag from the xbox map, mirroring joystick logic."""
+        """Update ControlFlag from the latest decoded XBOX map.
+
+        This method is called only after a fresh Joy message has been decoded,
+        so it is the right place to recover from a prior stale-input disable.
+        """
         with self.data_mutex:
-            # FSM state mapping - cover keyboard commands z/c/m/h/g/p/o
+            self.flag.enable = True
+            # FSM state mapping.  Lion policy commands use shoulder-button
+            # chords so single-button STOP/ZERO remain easy to hit:
+            #   LB+A -> prep pose, LB+B -> WalkLion, RB+B -> WalkLionDWAQ.
+            # POLICYZERO requires isolated LB+X; mixed LB+X+A/B/Home should
+            # not steal the Lion prep/start or legacy BeyondMimic chords.
+            if self._policyzero_chord_pressed():
+                self.flag.fsm_state_command = 'gotoPOLICYZERO'
+            elif self.map.lb == 1 and self.map.a == 1:
+                self.flag.fsm_state_command = 'gotoLIONZERO'
+            elif self.map.lb == 1 and self.map.b == 1:
+                self.flag.fsm_state_command = 'gotoWALKLION'
+            elif self.map.rb == 1 and self.map.b == 1:
+                self.flag.fsm_state_command = 'gotoWALKLIONDWAQ'
             # c -> gotoSTOP
-            if self.map.y == 1:
+            elif self.map.y == 1:
                 self.flag.fsm_state_command = 'gotoSTOP'
             # h -> gotoDH (Left trigger + A)
             # v -> gotoBEYONDMIMIC (Left trigger + home)
@@ -164,15 +195,6 @@ class XBOXController:
             # z -> gotoZERO
             elif self.map.x == 1:
                 self.flag.fsm_state_command = 'gotoZERO'
-            # m -> gotoWALKAMP (RB button)
-            elif self.map.rb == 1:
-                self.flag.fsm_state_command = 'gotoWALKAMP'
-            # n -> gotoWALKDEPTH (LB button)
-            elif self.map.lb == 1:
-                self.flag.fsm_state_command = 'gotoWALKDEPTH'
-            # b -> gotoSTAND (A button)
-            elif self.map.a == 1:
-                self.flag.fsm_state_command = 'gotoSTAND'
 
             # detect state change
             if not hasattr(self, '_last_state'):
@@ -193,12 +215,12 @@ class XBOXController:
 
             # continuous stick control (same scaling as joystick)
             if ly >= 0:
-                self.flag.x_speed_command = (ly * 0.8 + self.forward_command_offset)
+                self.flag.x_speed_command = (ly * self.max_forward_speed + self.forward_command_offset)
             else:
-                self.flag.x_speed_command = ly * 0.5
+                self.flag.x_speed_command = ly * self.max_backward_speed
 
-            self.flag.y_speed_command = (lx * 0.4 + self.lateral_command_offset)
-            self.flag.yaw_speed_command = (rx * 0.4 + self.rotation_command_offset)
+            self.flag.y_speed_command = (lx * -self.max_lateral_speed + self.lateral_command_offset)
+            self.flag.yaw_speed_command = (rx * -self.max_rotation_speed + self.rotation_command_offset)
 
             # discrete movement adjustments (map buttons to keyboard-like increments)
             # emulate w/s/a/d via shoulder buttons or dpad if needed
@@ -207,11 +229,11 @@ class XBOXController:
             dpad_v = getattr(self.map, 'dpad_v', 0.0)
             # left/right dpad emulate arrow keys for height adjust
             motion_add_number = 0
-            if dpad_h == 1.0 and getattr(self, 'last_dpad_h', 0.0) == 0.0:
-                # left arrow -> increase height (dpad left reports +1 on this controller)
+            if dpad_h == -1.0 and getattr(self, 'last_dpad_h', 0.0) == 0.0:
+                # left arrow -> increase height
                 motion_add_number = 1
-            elif dpad_h == -1.0 and getattr(self, 'last_dpad_h', 0.0) == 0.0:
-                # right arrow -> decrease height (dpad right reports -1 on this controller)
+            elif dpad_h == 1.0 and getattr(self, 'last_dpad_h', 0.0) == 0.0:
+                # right arrow -> decrease height
                 motion_add_number = -1
 
             # Remove select/start height adjustments to use only dpad_h for height control
@@ -253,8 +275,34 @@ class XBOXController:
                 self.flag.yaw_speed_command = 0.0
 
     def get_xbox_flag(self) -> ControlFlag:
+        """Return a snapshot of the current flag, zeroing stale input first."""
         with self.data_mutex:
-            return self.flag
+            if self._is_command_stale():
+                self.flag.enable = False
+                self._zero_walk_speed_command()
+            return copy.deepcopy(self.flag)
+
+    def _is_command_stale(self) -> bool:
+        """Return True when the ROS Joy stream has stopped updating."""
+        return time.monotonic() - self.last_msg_time > self.command_timeout_s
+
+    def _zero_walk_speed_command(self):
+        """Clear velocity commands without changing the requested FSM state."""
+        self.flag.x_speed_command = 0.0
+        self.flag.y_speed_command = 0.0
+        self.flag.yaw_speed_command = 0.0
+
+    def _policyzero_chord_pressed(self) -> bool:
+        """Return True only for the isolated LB+X bridge chord."""
+        return (
+            self.map.lb == 1
+            and self.map.x == 1
+            and self.map.a == 0
+            and self.map.b == 0
+            and self.map.y == 0
+            and self.map.rb == 0
+            and self.map.home == 0
+        )
 
     def init(self) -> int:
         print("XBOX controller initialized")

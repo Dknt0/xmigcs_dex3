@@ -60,7 +60,7 @@ EVENT_TO_FSM = {
     'run_policy': 'gotoWALKAMP',
     'enable_warking_policy': 'gotoWALKDEPTH',
     'enable_standing_policy': 'gotoWALKAMP',
-    'enable_robust_policy': 'gotoSTAND',
+    'enable_robust_policy': 'gotoWALKDEPTH100HZ',
 }
 
 # velocity nudge events (keyboard-style clients): name -> (axis, delta)
@@ -80,7 +80,7 @@ COMMAND_TO_STATE_ID = {
     'gotoZERO': 2,
     'gotoWALKAMP': 3,
     'gotoWALKDEPTH': 4,
-    'gotoSTAND': 5,
+    'gotoWALKDEPTH100HZ': 5,
 }
 
 # served at /setting/control/get — identical to bitbot-ovinf backend.json
@@ -355,7 +355,10 @@ class WebsocketController:
     def _current_state_id(self) -> int:
         if self.fsm is not None:
             try:
-                return self.fsm.get_current_state().value + 1
+                # ids must match /monitor/stateslist; enum .value+1 only worked
+                # while the exposed states were the first enum members
+                return COMMAND_TO_STATE_ID.get(
+                    'goto' + self.fsm.get_current_state().name, 0)
             except Exception:
                 return 0
         with self.flag_mutex:
@@ -371,8 +374,8 @@ class WebsocketController:
         for i in range(rd.motor_num):
             j = start + i
             row += [1.0,
-                    float(rd.q_a_[j]) * rad2deg, float(rd.q_d_s_[j]) * rad2deg,
-                    float(rd.q_dot_a_[j]), float(rd.tau_a_[j]), float(rd.joint_kp_s_[i]),
+                    float(rd.q_a_s_[j]) * rad2deg, float(rd.q_d_s_[j]) * rad2deg,
+                    float(rd.q_dot_a_s_[j]), float(rd.tau_a_s_[j]), float(rd.joint_kp_s_[i]),
                     float(rd.joint_kd_s_[i]), float(rd.temperature_a[i])]
         imu = rd.imu_data_
         row += [float(imu[2]) * rad2deg, float(imu[1]) * rad2deg, float(imu[0]) * rad2deg,
@@ -464,7 +467,7 @@ class WebsocketController:
         try:
             while True:
                 await asyncio.sleep(self.echo_interval)
-                await ws.send_str(self._echo_events_message())
+                # await ws.send_str(self._echo_events_message())
         except (asyncio.CancelledError, ConnectionError, RuntimeError):
             pass
 

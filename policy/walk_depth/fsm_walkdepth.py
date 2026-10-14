@@ -20,6 +20,7 @@ import os
 import time
 import yaml
 
+from common.control_timing import TickDecimator
 from FSM.fsm_base import FSMState, FSMStateName
 from common.joystick import ControlFlag
 from common.robot_data import RobotData
@@ -52,6 +53,8 @@ class FSMStateWALKDEPTH(FSMState):
         control_config = policy_config.get('control', {})
         self.action_scale_ = control_config.get('action_scale')
         self.decimation_ = control_config.get('decimation')
+        self._inference_clock = TickDecimator(
+            self.decimation_, self.dt_, self.robot_data_.control_dt_)
         self.warm_start_time_ = control_config.get('warm_start_time', 0.3)
 
         norm_config = policy_config.get('normalization', {})
@@ -75,16 +78,21 @@ class FSMStateWALKDEPTH(FSMState):
         # (对应 bitbot-ovinf dex_mj.xml 的 MujocoDepthCamera 设备)
         self.depth_w_ = int(depth_cfg['width'])
         self.depth_h_ = int(depth_cfg['height'])
-        self.depth_min_ = float(depth_cfg.get('min_depth', 0.0))
-        self.depth_max_ = float(depth_cfg.get('max_depth', 2.5))
-        self.depth_noise_ = float(depth_cfg.get('noise_stddev', 0.0))
-        self.depth_normalize_ = bool(depth_cfg.get('normalize', True))
+        # self.depth_min_ = float(depth_cfg.get('min_depth', 0.0))
+        # self.depth_max_ = float(depth_cfg.get('max_depth', 2.5))
+        # self.depth_noise_ = float(depth_cfg.get('noise_stddev', 0.0))
+        # self.depth_normalize_ = bool(depth_cfg.get('normalize', True))
         self.depth_crop_l_ = int(depth_cfg.get('crop_left', 0))
         self.depth_crop_r_ = int(depth_cfg.get('crop_right', 0))
         self.depth_crop_t_ = int(depth_cfg.get('crop_top', 0))
         self.depth_crop_b_ = int(depth_cfg.get('crop_bottom', 0))
-        self.depth_blur_ksize_ = int(depth_cfg.get('blur_kernel', 3))
-        self.depth_blur_sigma_ = float(depth_cfg.get('blur_sigma', 1.0))
+        # self.depth_blur_ksize_ = int(depth_cfg.get('blur_kernel', 3))
+        # self.depth_blur_sigma_ = float(depth_cfg.get('blur_sigma', 1.0))
+        # 无效像素修复阈值(米): Orbbec 336L 的无效点输出 0.0m, 若不处理会被
+        # 归一化成"最近障碍". 低于该阈值的像素按 instinct_onboard 方案 inpaint
+        # (邻域填充). 仿真中 MuJoCo 空像素为远距离(zfar), 掩码恒为空 → 本步骤
+        # 零开销, 不影响训练分布. 设为 0 禁用.
+        # self.depth_inpaint_ = float(depth_cfg.get('inpaint_threshold', 0.2))
         # 送入策略的帧尺寸 = 相机分辨率裁剪后 (ovinf obs_width_/obs_height_)
         self.depth_crop_w_ = self.depth_w_ - self.depth_crop_l_ - self.depth_crop_r_
         self.depth_crop_h_ = self.depth_h_ - self.depth_crop_t_ - self.depth_crop_b_
@@ -193,10 +201,13 @@ class FSMStateWALKDEPTH(FSMState):
             print(f"[FSMStateWALKDEPTH-ONNX] ONNX model loaded successfully: {self.model_path}")
         except Exception as e:
             print(f"[FSMStateWALKDEPTH] Failed to load ONNX model: {e}")
+            raise RuntimeError(f"Failed to load ONNX model: {e}")
+
             self.ort_session_ = None
 
     def on_enter(self):
         """进入WALKDEPTH: 热身填充(同 ovinf WarmUp: 本体历史置零, 深度历史填0.5)"""
+        self._inference_clock.reset()
         self.proprio_hist_buf_.fill(0.0)
         self.last_actions_.fill(0.0)
         self.actions_.fill(0.0)
@@ -214,48 +225,55 @@ class FSMStateWALKDEPTH(FSMState):
             self._warm_start_pose.fill(0.0)
         print("[FSMStateWALKDEPTH] enter")
 
-    def _preprocess_depth(self, img) -> np.ndarray:
-        """训练侧 Instinct510 dex23dof_depth_cfg.py noise_pipeline 的移植。
-
-        顺序: 缩放到相机分辨率 -> 加性高斯噪声(米制) -> crop ->
-        高斯模糊(reflect) -> 裁剪[min,max] -> 归一化, 归一化在最后。
-        """
-        img = np.asarray(img, dtype=np.float32)
-        if img.shape != (self.depth_h_, self.depth_w_):
-            # img = cv2.resize(img, (self.depth_w_, self.depth_h_),
-            #                  interpolation=cv2.INTER_AREA)
-            img = cv2.resize(img, (self.depth_w_, self.depth_h_),
-                             interpolation=cv2.INTER_NEAREST)
-        else:
-            img = img.copy()
-        if self.depth_noise_ > 0.0:
-            img += np.random.normal(0.0, self.depth_noise_, img.shape).astype(np.float32)
-        h = self.depth_crop_h_
-        w = self.depth_crop_w_
-        processed = img[self.depth_crop_t_:self.depth_crop_t_ + h,
-                        self.depth_crop_l_:self.depth_crop_l_ + w]
-        if self.depth_blur_ksize_ > 0:
-            # torchvision GaussianBlur 默认 'reflect' 填充 == REFLECT_101
-            processed = cv2.GaussianBlur(
-                processed, (self.depth_blur_ksize_, self.depth_blur_ksize_),
-                self.depth_blur_sigma_, borderType=cv2.BORDER_REFLECT_101)
-        processed = np.clip(processed, self.depth_min_, self.depth_max_)
-        if self.depth_normalize_:
-            processed = (processed - self.depth_min_) / (self.depth_max_ - self.depth_min_)
-        return processed.reshape(-1)
+    # def _preprocess_depth(self, img) -> np.ndarray:
+    #     """训练侧 Instinct510 dex23dof_depth_cfg.py noise_pipeline 的移植。
+    #
+    #     顺序: 缩放到相机分辨率 -> 加性高斯噪声(米制) -> crop ->
+    #     inpaint无效像素(< threshold, 仿真中为空操作) -> 高斯模糊(reflect)
+    #     -> 裁剪[min,max] -> 归一化, 归一化在最后。
+    #     """
+    #     img = np.asarray(img, dtype=np.float32)
+    #     if img.shape != (self.depth_h_, self.depth_w_):
+    #         # img = cv2.resize(img, (self.depth_w_, self.depth_h_),
+    #         #                  interpolation=cv2.INTER_AREA)
+    #         img = cv2.resize(img, (self.depth_w_, self.depth_h_),
+    #                          interpolation=cv2.INTER_NEAREST)
+    #     else:
+    #         img = img.copy()
+    #     if self.depth_noise_ > 0.0:
+    #         img += np.random.normal(0.0, self.depth_noise_, img.shape).astype(np.float32)
+    #     h = self.depth_crop_h_
+    #     w = self.depth_crop_w_
+    #     processed = img[self.depth_crop_t_:self.depth_crop_t_ + h,
+    #                     self.depth_crop_l_:self.depth_crop_l_ + w]
+    #     if self.depth_inpaint_ > 0.0:
+    #         # 336L 无效像素(0.0m)与近场噪声 → 邻域填充, 避免被读成最近障碍
+    #         invalid_mask = (processed < self.depth_inpaint_).astype(np.uint8)
+    #         if invalid_mask.any():
+    #             processed = cv2.inpaint(processed, invalid_mask, 3,
+    #                                     cv2.INPAINT_NS)
+    #     if self.depth_blur_ksize_ > 0:
+    #         # torchvision GaussianBlur 默认 'reflect' 填充 == REFLECT_101
+    #         processed = cv2.GaussianBlur(
+    #             processed, (self.depth_blur_ksize_, self.depth_blur_ksize_),
+    #             self.depth_blur_sigma_, borderType=cv2.BORDER_REFLECT_101)
+    #     processed = np.clip(processed, self.depth_min_, self.depth_max_)
+    #     if self.depth_normalize_:
+    #         processed = (processed - self.depth_min_) / (self.depth_max_ - self.depth_min_)
+    #     return processed.reshape(-1)
 
     def _show_depth_frame(self, frame):
-        """弹窗显示送入策略的处理帧 (0=近, 255=远)"""
-        try:
-            vis = (frame.reshape(self.depth_crop_h_, self.depth_crop_w_)
-                   * 255.0).astype(np.uint8)
-            vis = cv2.resize(vis, (self.depth_crop_w_ * 8, self.depth_crop_h_ * 8),
-                             interpolation=cv2.INTER_NEAREST)
-            cv2.imshow('walkdepth_depth_obs', vis)
-            cv2.waitKey(1)
-        except cv2.error:
-            print("[FSMStateWALKDEPTH] debug_vis 需要 X 显示, 已关闭")
-            self.depth_debug_vis_ = False
+        """构建策略处理帧的可视化 (0=近, 255=远), 交给主线程定时器显示.
+
+        此处绝不调用 cv2.imshow/waitKey: 本方法在控制线程执行, 而 cv/Qt
+        窗口已统一归属主线程(pump_debug_vis), 跨线程 imshow 会永久阻塞
+        控制循环(实测死锁).
+        """
+        vis = (frame.reshape(self.depth_crop_h_, self.depth_crop_w_)
+               * 255.0).astype(np.uint8)
+        vis = cv2.resize(vis, (self.depth_crop_w_ * 20, self.depth_crop_h_ * 20),
+                         interpolation=cv2.INTER_NEAREST)
+        self.robot_data_.policy_vis_frame_ = vis
 
     def _get_depth_history(self) -> np.ndarray:
         """按 image_skip 间隔取 num_images 帧, 旧->新排列"""
@@ -290,11 +308,8 @@ class FSMStateWALKDEPTH(FSMState):
             proj_gravity.astype(np.float32),
         ])
 
-        # 深度: 每个策略tick把最新一帧预处理后入ring
-        img = self.robot_data_.depth_image_
-        if img is not None:
-            self._depth_received = True
-            frame = self._preprocess_depth(img)
+        frame = self.robot_data_.processed_depth_image_
+        if frame is not None:
             self.depth_ring_.append(frame)
             if self.depth_debug_vis_:
                 self._show_depth_frame(frame)
@@ -303,6 +318,20 @@ class FSMStateWALKDEPTH(FSMState):
                 print("[FSMStateWALKDEPTH] no depth image yet, using neutral 0.5 frames")
                 self._depth_warned = True
             self.depth_ring_.append(self._depth_neutral_frame_)
+
+        # 深度: 每个策略tick把最新一帧预处理后入ring
+        # img = self.robot_data_.depth_image_
+        # if img is not None:
+        #     self._depth_received = True
+        #     frame = self._preprocess_depth(img)
+        #     self.depth_ring_.append(frame)
+        #     if self.depth_debug_vis_:
+        #         self._show_depth_frame(frame)
+        # else:
+        #     if not self._depth_warned:
+        #         print("[FSMStateWALKDEPTH] no depth image yet, using neutral 0.5 frames")
+        #         self._depth_warned = True
+        #     self.depth_ring_.append(self._depth_neutral_frame_)
 
         # 本体历史: 首8帧用当前帧填满(walk_amp做法), 之后滚动
         if self.is_first_obs_:
@@ -330,7 +359,7 @@ class FSMStateWALKDEPTH(FSMState):
 
     def run(self, flag: ControlFlag):
         """运行WALKDEPTH状态"""
-        if int(self.robot_data_.time_now_ / self.dt_) % self.decimation_ == 0:
+        if self._inference_clock.step():
             # self._policy_tick_count += 1
             # now = time.perf_counter()
             # if self._policy_tick_count == 1:
@@ -356,14 +385,14 @@ class FSMStateWALKDEPTH(FSMState):
                 blend = self._warmup_inference_counter / float(self._warm_start_steps)
                 commanded_pos = (1.0 - blend) * self._warm_start_pose + blend * target_dof_pos_mj
 
-            base = self.robot_data_.q_d_.shape[0] - self.motor_num_
-            self.robot_data_.q_d_[base:base + len(self.joint_xml)] = commanded_pos
-            self.robot_data_.q_dot_d_[base:base + len(self.joint_xml)] = 0.0
-            self.robot_data_.tau_d_[base:base + len(self.joint_xml)] = 0.0
+            base = self.robot_data_.q_d_s_.shape[0] - self.motor_num_
+            self.robot_data_.q_d_s_[base:base + len(self.joint_xml)] = commanded_pos
+            self.robot_data_.q_dot_d_s_[base:base + len(self.joint_xml)] = 0.0
+            self.robot_data_.tau_d_s_[base:base + len(self.joint_xml)] = 0.0
             self.last_actions_[:] = self.actions_
 
-        self.robot_data_.joint_kp_p_[:len(self.joint_xml)] = self.stiffness_array
-        self.robot_data_.joint_kd_p_[:len(self.joint_xml)] = self.damping_array
+        self.robot_data_.joint_kp_s_[:len(self.joint_xml)] = self.stiffness_array
+        self.robot_data_.joint_kd_s_[:len(self.joint_xml)] = self.damping_array
 
     def on_exit(self):
         print("[FSMStateWALKDEPTH] exit")
@@ -377,5 +406,9 @@ class FSMStateWALKDEPTH(FSMState):
             return FSMStateName.WALKAMP
         elif flag.fsm_state_command == "gotoSTAND":
             return FSMStateName.STAND
+        elif flag.fsm_state_command == "gotoWALKDEPTH":
+            return FSMStateName.WALKDEPTH
+        elif flag.fsm_state_command == "gotoWALKDEPTH100HZ":
+            return FSMStateName.WALKDEPTH100HZ
         else:
             return None

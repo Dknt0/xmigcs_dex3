@@ -50,24 +50,24 @@ class FSMStateStop(FSMState):
     def on_enter(self):
         """进入停止状态 - 与C++版本完全一致"""
         # Store the last motor positions as hold positions (equivalent to tail(motor_num_))
-        self.hold_position_ = self.robot_data_.q_a_[-self.motor_num_:].copy()
+        self.hold_position_ = self.robot_data_.q_a_s_[-self.motor_num_:].copy()
         print("[FSMStateStop] Enter stop state")
 
     def run(self, flag: ControlFlag):
         """运行停止状态 - 与C++版本完全一致"""
         if self.robot_data_ is None:
             return
-        print(f"""[FSMStateStop] Holding position: {self.hold_position_}""")
+        # print(f"""[FSMStateStop] Holding position: {self.hold_position_}""")
         # Enforce the hold position for every frame (equivalent to tail(motor_num_))
-        self.robot_data_.q_d_[-self.motor_num_:] = self.hold_position_
+        self.robot_data_.q_d_s_[-self.motor_num_:] = self.hold_position_
         # Set desired joint velocities to zero
-        self.robot_data_.q_dot_d_[-self.motor_num_:] = 0.0
+        self.robot_data_.q_dot_d_s_[-self.motor_num_:] = 0.0
         # Set desired torques to zero
-        self.robot_data_.tau_d_[-self.motor_num_:] = 0.0
+        self.robot_data_.tau_d_s_[-self.motor_num_:] = 0.0
 
         # Set proportional and derivative gains
-        self.robot_data_.joint_kp_p_[:self.motor_num_] = self.kp_pos_
-        self.robot_data_.joint_kd_p_[:self.motor_num_] = self.kd_pos_
+        self.robot_data_.joint_kp_s_[:self.motor_num_] = self.kp_pos_
+        self.robot_data_.joint_kd_s_[:self.motor_num_] = self.kd_pos_
 
     def on_exit(self):
         """退出停止状态 - 与C++版本完全一致"""
@@ -80,5 +80,9 @@ class FSMStateStop(FSMState):
             return FSMStateName.STOP
         elif flag.fsm_state_command == "gotoZERO":
             return FSMStateName.ZERO
+        elif flag.fsm_state_command == "gotoBEYONDZERO":
+            return FSMStateName.BEYONDZERO
+        elif flag.fsm_state_command == "gotoLIONZERO":
+            return FSMStateName.LIONZERO
         else:
             return None  # 无状态转换

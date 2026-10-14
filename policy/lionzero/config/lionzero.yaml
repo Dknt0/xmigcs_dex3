@@ -1,0 +1,44 @@
+motor_num: 29
+
+# Motor/XML order.  Edit target_joint_angles below to choose the shared policy
+# start pose for both WALKLION and WALKLIONDWAQ.
+joint_xml: [
+  hip_pitch_l_joint, hip_roll_l_joint, hip_yaw_l_joint,
+  knee_pitch_l_joint, ankle_pitch_l_joint, ankle_roll_l_joint,
+  hip_pitch_r_joint, hip_roll_r_joint, hip_yaw_r_joint,
+  knee_pitch_r_joint, ankle_pitch_r_joint, ankle_roll_r_joint,
+  waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
+  shoulder_pitch_l_joint, shoulder_roll_l_joint, shoulder_yaw_l_joint,
+  elbow_pitch_l_joint, elbow_yaw_l_joint, wrist_pitch_l_joint, wrist_roll_l_joint,
+  shoulder_pitch_r_joint, shoulder_roll_r_joint, shoulder_yaw_r_joint,
+  elbow_pitch_r_joint, elbow_yaw_r_joint, wrist_pitch_r_joint, wrist_roll_r_joint,
+]
+
+target_joint_angles: [
+  -0.2, 0.0, -0.0, 0.35, -0.15, 0.0,
+  -0.2, 0.0, -0.0, 0.35, -0.15, 0.0,
+  0.0, 0.0, 0.0,
+  -8.30429396e-01, -2.25189712e-02, 0.0, -2.48733061e+00,
+  8.76636756e-02, 8.76636756e-02, 8.76636756e-02,
+  -8.30429396e-01, 0.0, 0.0, -2.48733061e+00,
+  8.76636756e-02, 8.76636756e-02, 8.76636756e-02,
+]
+
+kp_pos: [
+  300.0, 300.0, 150.0, 330.0, 30.0, 16.8,
+  300.0, 300.0, 150.0, 330.0, 30.0, 16.8,
+  400.0, 400.0, 400.0,
+  150.0, 50.0, 50.0, 150.0, 50.0, 20.0, 20.0,
+  150.0, 50.0, 50.0, 150.0, 50.0, 20.0, 20.0,
+]
+
+kd_pos: [
+  10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+  10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+  5.0, 10.0, 10.0,
+  4.0, 2.0, 2.0, 4.0, 2.0, 2.0, 2.0,
+  4.0, 2.0, 2.0, 4.0, 2.0, 2.0, 2.0,
+]
+
+interp_step: 0.005
+interp_max: 1.0

@@ -14,27 +14,36 @@ class RobotData:
         self.motor_num = motor_num
         self.whole_joint_num = whole_joint_num
 
-        # Joint states (actual)
-        self.q_a_ = np.zeros(whole_joint_num)  # Joint positions
-        self.q_dot_a_ = np.zeros(whole_joint_num)  # Joint velocities
-        self.tau_a_ = np.zeros(whole_joint_num)  # Joint torques
-        self.temperature_a = np.zeros(motor_num)  # Joint temperatures
-        self.q_a_last = np.zeros(whole_joint_num) # 上一时刻关节位置
-        self.qdot_a_last = np.zeros(whole_joint_num) # 上一时刻关节速度
-        self.tor_a_last = np.zeros(whole_joint_num) # 上一时刻关节力矩
-
-        # Joint commands (desired)
-        self.q_d_ = np.zeros(whole_joint_num)  # Desired joint positions
-        self.q_d_s_ = np.zeros(whole_joint_num) # Desired serial joint positions 
-        self.q_dot_d_ = np.zeros(whole_joint_num)  # Desired joint velocities
-        self.tau_d_ = np.zeros(whole_joint_num)  # Desired joint torques
-
-        # Control gains
-        self.joint_kp_p_ = np.zeros(motor_num)  # Proportional gains
-        self.joint_kd_p_ = np.zeros(motor_num)  # Derivative gains
-
-        self.joint_kp_s_ = np.zeros(motor_num)  # Proportional gains
-        self.joint_kd_s_ = np.zeros(motor_num)  # Derivative gains
+        # Coordinate contract (all vectors use XML joint order + floating base):
+        # s: serial joints; interface writes feedback, policies write targets.
+        # p: actuator coordinates after zero/direction normalization; ankles are
+        #    parallel on hardware, serial pass-through in simulation.
+        # motor: final outgoing wire coordinates, after zero/direction mapping.
+        # These buffers never alias. Sending must not mutate any serial target.
+        self.q_a_s_ = np.zeros(whole_joint_num)
+        self.q_dot_a_s_ = np.zeros(whole_joint_num)
+        self.tau_a_s_ = np.zeros(whole_joint_num)
+        self.q_a_p_ = np.zeros(whole_joint_num)
+        self.q_dot_a_p_ = np.zeros(whole_joint_num)
+        self.tau_a_p_ = np.zeros(whole_joint_num)
+        self.q_d_s_ = np.zeros(whole_joint_num)
+        self.q_dot_d_s_ = np.zeros(whole_joint_num)
+        self.tau_d_s_ = np.zeros(whole_joint_num)
+        self.joint_kp_s_ = np.zeros(motor_num)
+        self.joint_kd_s_ = np.zeros(motor_num)
+        self.q_d_p_ = np.zeros(whole_joint_num)
+        self.q_dot_d_p_ = np.zeros(whole_joint_num)
+        self.tau_d_p_ = np.zeros(whole_joint_num)
+        self.joint_kp_p_ = np.zeros(motor_num)
+        self.joint_kd_p_ = np.zeros(motor_num)
+        self.q_d_motor_ = np.zeros(whole_joint_num)
+        self.q_dot_d_motor_ = np.zeros(whole_joint_num)
+        self.tau_d_motor_ = np.zeros(whole_joint_num)
+        self.temperature_a = np.zeros(motor_num)
+        # Previous feedback is in normalized actuator coordinates, not serial.
+        self.q_a_last = np.zeros(whole_joint_num)
+        self.qdot_a_last = np.zeros(whole_joint_num)
+        self.tor_a_last = np.zeros(whole_joint_num)
 
         # IMU data: [yaw, pitch, roll, gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z]
         self.imu_data_ = np.zeros(13)
@@ -42,10 +51,18 @@ class RobotData:
         # Depth image (latest /depth_camera/image_raw frame, float32 meters; None until first frame)
         ## TODO: Initialize the image with the middle of the range.
         self.depth_image_ = None
+        self.processed_depth_image_ = None
+        self.depth_processing_time_ = 0.0
         self.depth_image_stamp_ = 0.0
+        self.depth_counter_ = 0
+        self.fps_val = 0.0
+        # 策略侧调试帧(如 WALKDEPTH 处理帧): 策略线程只写入,
+        # 主线程 pump_debug_vis 显示 —— cv 窗口必须全部在主线程
+        self.policy_vis_frame_ = None
 
         # Timing
         self.time_now_ = 0.0
+        self.control_dt_ = None  # Set by the node before policy construction.
 
         # Configuration
         self.config_file_ = ""
@@ -59,14 +76,15 @@ class RobotData:
 
     def copy_from(self, other: 'RobotData'):
         """从另一个RobotData对象复制数据"""
-        self.q_a_[:] = other.q_a_[:]
-        self.q_dot_a_[:] = other.q_dot_a_[:]
-        self.tau_a_[:] = other.tau_a_[:]
-        self.q_d_[:] = other.q_d_[:]
-        self.q_dot_d_[:] = other.q_dot_d_[:]
-        self.tau_d_[:] = other.tau_d_[:]
-        self.joint_kp_p_[:] = other.joint_kp_p_[:]
-        self.joint_kd_p_[:] = other.joint_kd_p_[:]
+        for coordinates in ("s", "p"):
+            for field in ("q_a", "q_dot_a", "tau_a", "q_d", "q_dot_d", "tau_d",
+                          "joint_kp", "joint_kd"):
+                name = f"{field}_{coordinates}_"
+                np.copyto(getattr(self, name), getattr(other, name))
+        for name in ("q_d_motor_", "q_dot_d_motor_", "tau_d_motor_",
+                     "q_a_last", "qdot_a_last", "tor_a_last", "temperature_a"):
+            np.copyto(getattr(self, name), getattr(other, name))
+        self.control_dt_ = other.control_dt_
         self.imu_data_[:] = other.imu_data_[:]
         self.time_now_ = other.time_now_
         self.config_file_ = other.config_file_
@@ -76,7 +94,7 @@ class RobotData:
 
     def get_joint_pos(self) -> np.ndarray:
         joint_start_idx = 35 - self.motor_num
-        joint_pos = self.q_a_[joint_start_idx:].astype(np.float32) 
+        joint_pos = self.q_a_s_[joint_start_idx:].astype(np.float32)
         return joint_pos
     
     def get_serial_joint_pos_desired(self) -> np.ndarray:
@@ -86,7 +104,7 @@ class RobotData:
 
     def get_joint_vel(self)-> np.ndarray:
         joint_start_idx = 35 - self.motor_num
-        joint_vel = self.q_dot_a_[joint_start_idx:].astype(np.float32)
+        joint_vel = self.q_dot_a_s_[joint_start_idx:].astype(np.float32)
         return joint_vel
 
     def get_angular_velocity(self) -> np.ndarray:

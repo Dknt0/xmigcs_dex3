@@ -1,11 +1,11 @@
 # xMIGCS
 
-xMIGCS是一个用于机器人控制的软件系统，专注于通过有限状态机（FSM）和策略模块实现对机器人的灵活控制。项目服务于运动智能领域的研究与开发，支持多种控制模式和外部输入方式（如键盘、手柄等）。
+xMIGCS (eXtensible Motion Intelligence Group Control System) 是一个用于机器人控制的软件系统，专注于通过有限状态机（FSM）和策略模块实现对机器人的灵活控制。项目服务于运动智能领域的研究与开发，支持多种控制模式和外部输入方式（如键盘、手柄等）。
 
 ## 功能特性
 
 - **状态机管理**: 基于 FSM 模块实现机器人行为的状态流转控制
-- **多策略支持**: 提供多种控制策略
+- **多策略支持**: 提供多种控制策略（如 dh, mlp, pbhc, zero 等）
 - **人机交互控制**: 支持键盘、手柄等外设进行机器人实时操控
 - **配置驱动**: 使用 YAML 文件进行参数配置，支持不同场景下的快速部署
 - **模块化设计**: 各策略独立封装，便于扩展与维护
@@ -14,8 +14,9 @@ xMIGCS是一个用于机器人控制的软件系统，专注于通过有限状�
 
 ### 环境要求
 
+- 当前 `requirements.txt` 按 Python 3.12 环境使用，搭配 Ubuntu 24.04 / ROS 2 Jazzy。Python ABI 必须与本地 wheel 和 ROS 一致。
 - Git (用于版本控制)
-- bodyctrl_msgs
+- bodyctrl_msgs 下载地址：http://10.20.0.252:5302/installation.html
 
 ### 安装步骤
 
@@ -23,70 +24,65 @@ xMIGCS是一个用于机器人控制的软件系统，专注于通过有限状�
 cd your_project_folder
 unzip xmigcs.zip
 cd xmigcs/
-# 系统是24.04
-pip install -r requirements_24.txt
+pip install -r requirements.txt
+# Ubuntu 24.04 / ROS Jazzy / Python 3.12
 pip install lib/24/sptlib_python-0.1.0-cp312-cp312-linux_x86_64.whl
-# 系统是22.04
-pip install -r requirements_22.txt
-pip install lib/22/sptlib_python-0.1.0-cp310-cp310-linux_x86_64.whl
-# 仅仿真中需要安装
-# 24.04下
-sudo dpkg -i lib/24/ros-jazzy-bodyctrl-msgs_0.0.0-0noble_amd64.deb 
-# 22.04下
-sudo dpkg -i lib/22/ros-humble-bodyctrl-msgs_0.0.0-0jammy_amd64.deb
+sudo dpkg -i lib/24/ros-jazzy-bodyctrl-msgs_0.0.0-0noble_amd64.deb
+# lib/22 提供 Humble / Python 3.10 对应库；使用它时须另外匹配 Python 依赖版本。
 ```
+
+复制来的 `.venv` 若仍是 Python 3.10，不能直接加载 `lib/24` 的 CPython 3.12 wheel；应在与目标 ROS 匹配的环境安装依赖。
+
+### 3.0 踝解算与图像接口
+
+踝转换使用 `sptlib_python.funcSPTrans`。反馈顺序保持
+`set_p_est → calcFK → calcIK → get_s_state`；命令顺序保持
+`set_s_des → calc_joint_pos_ref → calc_joint_tor_des → get_p_des`。
+新库 getter 返回 `(success, q, dq, tau)`；失败或非有限/错误维度结果会抛出异常，当前调用不会继续下发。
+
+`RobotData` 的 `_s_` 串联缓冲供策略和现有 WebSocket 监控读取，`_p_` 并联缓冲保存实际执行器反馈和目标，`_motor_` 缓冲保存零偏/方向转换后的下发量。转换只写相应缓冲，不覆盖串联策略目标。踝串联 PD 力矩经新库转换后，仍按原来的并联 PD 公式折算位置目标；踝下发前馈力矩保持为零，避免重复施加力矩。主循环顺序、29 关节映射及腿/臂/腰三组 ROS 话题保持原样。
+
+`common/robot_interface.py` 中 Orbbec SDK 导入、初始化、采集及释放均已注释。图像由外部相机节点发布，配置使用 `robot_interface.depth.type: ros2` 和 `robot_interface.depth.ros2.topic`；支持 `16UC1` 毫米及 `32FC1` 米制深度。`refresh_depth()` 保留为空钩子，ROS 回调继续完成预处理。也可配置 `type: disable`。
 
 ### 运行项目
 
+以下示例以 Humble 为例；Jazzy 环境使用对应的 `/opt/ros/jazzy/setup.bash`。
+
 ```bash
 # body节点, 只有真机才需要，仿真启动xsim_mujoco就行
-#先关闭真机自启动运控程序
-sudo systemctl disable proc_manager.service
-#断电关机重启
-#开机后，确认自启动已关闭，运行下面命令，若service状态为inactive，则已关闭
-sudo systemctl status proc_manager.service
+sudo su
+source /home/ubuntu/ros2ws/install/setup.bash
+source /opt/ros/humble/setup.sh
+ros2 launch body_control body.launch.py
 
-# 真机上启动body_control(绑定核心，只能绑6-9)
-sudo su
-source /home/ubuntu/xos/setup.bash
-chrt -r 99 taskset -c 6-9 ros2 launch body_control body_control.launch.py
-# 启动手柄
-sudo su
-source /home/ubuntu/xos/setup.bash
-ros2 launch joystick joystick.launch.py
+# XBOX手柄节点
+export ROS_DOMAIN_ID=YOUR_DOMAIN_ID
+source /opt/ros/humble/setup.bash
+ros2 run joy joy_node --ros-args --remap joy:=xbox_data
+
+# 云卓手柄节点
+# 安装: https://zitd5je6f7j.feishu.cn/wiki/Y6zxwVA5WisMwskzeHdcqQpQnQx?fromScene=spaceOverview
+source ~/ros2ws/install/setup.bash
+ros2 launch usb_sbus usb_sbus.launch.py
 
 # 启动主控制节点
-# 实机(绑定核心，推理频率更稳定，只能绑0-5)
-sudo su
-source /home/ubuntu/xos/setup.bash
-export PYTHONPATH="/home/ubuntu/.local/lib/python3.12/site-packages/:/home/ubuntu/.local/lib/python3.12/site-packages/cmeel.prefix/lib/python3.12/site-packages/:/home/ubuntu/xos/robot_control/lib/python:$PYTHONPATH"
-export LD_LIBRARY_PATH="/home/ubuntu/.local/lib/python3.12/site-packages/:/home/ubuntu/.local/lib/python3.12/site-packages/cmeel.prefix/lib:/home/ubuntu/xos/robot_control/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export PATH="/home/ubuntu/.local/bin:$PATH"
-cd Deploy_Tienkung
-chrt -r 1 taskset -c 0-5 python3 rl_control_node.py
-
-# 仿真
-# 设置domain_id防止局域网络与其他机器人冲突
 export ROS_DOMAIN_ID=YOUR_DOMAIN_ID
-# 24.04, ros2=jazzy
-source /opt/ros/jazzy/setup.bash
-cd xmigcs
-python3 rl_control_node_sim.py
-# 22.04, ros2=humble
 source /opt/ros/humble/setup.bash
+source /home/ubuntu/ros2ws/install/setup.bash
+
+# 实机
 cd xmigcs
+python3 rl_control_node.py
+# 仿真
 python3 rl_control_node_sim.py
+
+touch /tmp/rl_start_signal
 ```
 
 ## 控制器使用说明
 
 ### XBOX手柄键位映射
-```bash
-# 仿真中启动xbox手柄
-export ROS_DOMAIN_ID=YOUR_DOMAIN_ID
-source /opt/ros/jazzy/setup.bash
-ros2 run joy joy_node --ros-args --remap joy:=xbox_data
-```
+
 xMIGCS支持标准XBOX手柄控制，以下是详细键位映射关系：
 
 #### 状态映射关系
@@ -119,7 +115,7 @@ xMIGCS支持标准云卓手柄控制，开始使用前先确保所有键都回�
 |   所有键(拨中)   |         D      | gotoZERO     | 回到零位状态  |
 |   所有键(拨中)   |         A      | gotoWALKAMP      | WALKAMP策略状态  |
 |   E(上拨)   |         A      | gotoBEYONDMIMIC   | BEYONDMIMIC策略状态   |
-|   E(上拨)   |         D      | gotoBEYONDZERO   | BEYONDMIMIC零位状态   |
+|   E(上拨)   |         D      | gotoBEYONZERO   | BEYONDMIMIC零位状态   |
 |   F(上拨)   |         无      | 手柄控制失能，只有停止键可用      | |
 
 ##### 基础运动控制
@@ -139,8 +135,7 @@ xMIGCS支持标准云卓手柄控制，开始使用前先确保所有键都回�
 ├── config              # 配置文件
 ├── policy              # 控制策略模块
 ├── test                # 测试文件
-└── rl_control_node.py  # 真机控制节点
-└── rl_control_node_sim.py # 仿真控制节点
+└── rl_control_node.py  # 主控制节点
 ```
 
 ## 如何添加新的控制策略
@@ -179,60 +174,8 @@ xMIGCS支持标准云卓手柄控制，开始使用前先确保所有键都回�
    - 导入新策略类
    - 在 _init_states() 方法中初始化状态对象
    - 在 FSMStateName 枚举中添加新状态
-2. 控制器设置：云卓12手柄(默认)、键盘(需自定义实现)、XBOX手柄(自定义实现)
-   - 以云卓12手柄为例，需要在common/joystick.py中添加对应的按键映射
-  ```python
-      def joy_flag_update(self):
-        """根据手柄输入更新控制标志"""
-        with self.data_mutex:
-            # 更新手柄启动标志
-            if self.joy_map.f == -1.0:
-                self.joy_flag.enable = False
-            else:
-                self.joy_flag.enable = True
-            # FSM状态切换命令
-            if self.joy_map.c == 1.0:
-                self.joy_flag.fsm_state_command = "gotoSTOP"
-            else:
-                button_pressed_nums = self.check_button_pressed_nums(
-                    self.joy_map)
-                if button_pressed_nums == 0:
-                    if self.joy_map.d == 1.0:
-                        self.joy_flag.fsm_state_command = "gotoZERO"
-                    elif self.joy_map.a == 1.0:
-                        self.joy_flag.fsm_state_command = "gotoWALKAMP"
-                    # 获取walk速度命令
-                    self.get_x_y_yaw_speed_command()
-                    # 获取高度命令
-                    self.get_walk_height_command()
-                if button_pressed_nums == 1:
-                    if self.joy_map.e == -1.0:
-                        #e上拨
-                        if self.joy_map.a == 1.0:
-                            self.joy_flag.fsm_state_command = "gotoBEYONDMIMIC"
-                        elif self.joy_map.d == 1.0:
-                            self.joy_flag.fsm_state_command = "gotoBEYONDZERO"
-  ```
-3. robot_interface.py 中添加新策略的控制映射
-  ```python
-    def _load_control_status(self, config: Dict[str, Any]):
-        # 字符串命令到枚举值的映射
-        state_to_FSMState = {
-            "STOP": FSMStateName.STOP,
-            "ZERO": FSMStateName.ZERO,
-            "WALKAMP": FSMStateName.WALKAMP,
-            "BEYONDMIMIC": FSMStateName.BEYONDMIMIC,
-            "BEYONDZERO": FSMStateName.BEYONDZERO,
-            "MYPOLICY": FSMStateName.MYPOLICY,
-        }
-  ```
-4. 更新配置文件dex_config.yaml 以支持新策略的相关参数
-   ```yaml
-    control_tool: joystick # joystick, xbox, keyboard
-    waist_control_status: ["ZERO", "STOP", "BEYONDMIMIC", "BEYONDZERO", "WALKAMP"] # 
-    legs_control_status: [] #空代表都允许控制，仅腿部是这个逻辑
-    arms_control_status: ["ZERO", "STOP",  "BEYONDMIMIC", "BEYONDZERO", "WALKAMP"] #
-   ```
+2. 在控制接口（如 common/joystick.py中添加对应的状态映射
+3. 更新配置文件dex_config.yaml 以支持新策略的相关参数
 ## 开发与贡献
 
 欢迎对项目进行贡献，开发前请确保：
@@ -248,8 +191,3 @@ xMIGCS支持标准云卓手柄控制，开始使用前先确保所有键都回�
 ## 项目状态
 
 项目正在积极开发中。
-
-  cp /tmp/fastdds_udp_only.xml
-  ~/.ros/fastdds_udp_only.xml   # keep it
-  export FASTRTPS_DEFAULT_PROFILES_FILE=~/.ros/fas
-  tdds_udp_only.xml

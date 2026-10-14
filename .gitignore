@@ -4,7 +4,11 @@
 __pycache__/
 .history
 bag/
-*build/
-*egg-info/
-.claude/settings.local.json
-.claude
+*.onnx
+*.pt
+*.pth
+log
+Log
+scripts/Log
+tests/
+docs/

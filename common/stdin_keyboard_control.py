@@ -57,6 +57,13 @@ class KeyboardController:
         print("Available keyboard commands:")
         print("  z - Goto ZERO state")
         print("  c - Goto STOP state")
+        print("  v - Goto BEYONDMIMIC state")
+        print("  o - Goto BEYONDZERO state")
+        print("  m - Goto WALKAMP state")
+        print("  g - Goto LIONZERO prep state")
+        print("  l - Start WALKLION state from LIONZERO")
+        print("  h - Start WALKLIONDWAQ state from LIONZERO")
+        print("  u - Auto bridge WALKLION <-> BEYONDMIMIC through POLICYZERO")
         print("  Left/Right arrows - Adjust height")
         print("  w/a/s/d - Movement controls")
         print("  q/e - Rotation controls (turn left/right)")
@@ -178,12 +185,12 @@ class KeyboardController:
             self._on_c_key()
         elif key == 'm':
             self._on_m_key()
-        elif key == 'n':
-            self._on_n_key()
-        elif key == 'b':
-            self._on_b_key()
         elif key == 'h':
             self._on_h_key()
+        elif key == 'l':
+            self._on_l_key()
+        elif key == 'u':
+            self._on_u_key()
         elif key == 'r':
             self._on_r_key()
         elif key == 'x':
@@ -305,6 +312,44 @@ class KeyboardController:
             self.keyboard_flag.fsm_state_command = "gotoSTOP"
             print("Command: gotoSTOP")
             
+    def _on_m_key(self):
+        """处理m键 - 切换到WALKAMP状态"""
+        with self.data_mutex:
+            self.keyboard_flag.fsm_state_command = "gotoWALKAMP"
+            print("Command: gotoWALKAMP")
+            
+    def _on_l_key(self):
+        """处理l键 - 切换到WALKLION状态"""
+        with self.data_mutex:
+            self.keyboard_flag.fsm_state_command = "gotoWALKLION"
+            print("Command: gotoWALKLION")
+
+    def _on_h_key(self):
+        with self.data_mutex:
+            self.keyboard_flag.fsm_state_command = "gotoWALKLIONDWAQ"
+            print("Command: gotoWALKLIONDWAQ")
+
+    def _on_u_key(self):
+        """处理u键 - 一次触发WALKLION/BEYONDMIMIC自动桥接"""
+        with self.data_mutex:
+            self.keyboard_flag.fsm_state_command = "gotoPOLICYZERO"
+            print("Command: gotoPOLICYZERO")
+        
+    def _on_g_key(self):
+        """处理g键 - 切换到LIONZERO预备状态"""
+        with self.data_mutex:
+            self.keyboard_flag.fsm_state_command = "gotoLIONZERO"
+            print("Command: gotoLIONZERO")
+        
+    def _on_p_key(self):
+        print("p key pressed - available for additional functions")
+        
+    def _on_o_key(self):
+        """处理o键 - 切换到BEYONDZERO状态"""
+        with self.data_mutex:
+            self.keyboard_flag.fsm_state_command = "gotoBEYONDZERO"
+            print("Command: gotoBEYONDZERO")
+            
             
     def _on_r_key(self):
         """处理r键 - 重置移动命令"""
@@ -319,24 +364,6 @@ class KeyboardController:
         with self.data_mutex:
             self.running = False
             print("Quit command received")
-
-    def _on_m_key(self):
-        """处理m键 - 切换到WALKAMP状态"""
-        with self.data_mutex:
-            self.keyboard_flag.fsm_state_command = "gotoWALKAMP"
-            print("Command: gotoWALKAMP")
-
-    def _on_n_key(self):
-        """处理n键 - 切换到WALKDEPTH状态"""
-        with self.data_mutex:
-            self.keyboard_flag.fsm_state_command = "gotoWALKDEPTH"
-            print("Command: gotoWALKDEPTH")
-
-    def _on_b_key(self):
-        """处理b键 - 切换到STAND状态"""
-        with self.data_mutex:
-            self.keyboard_flag.fsm_state_command = "gotoSTAND"
-            print("Command: gotoSTAND")
     
     def _handle_ctrl_c(self):
         """处理Ctrl+C - 发送SIGINT信号给主进程"""

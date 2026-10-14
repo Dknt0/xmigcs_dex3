@@ -1,6 +1,10 @@
 # 深度感知行走策略 (perceptive locomotion, Instinct510 dex23dof_depth training)
 # 移植自 bitbot_gz checkpoint/dex/encoder_actor_critic.onnx + robot_dex.yaml policy_walking
-model_path: "policy.onnx"
+# model_path: "dex_test3_1_c.onnx"
+# model_path: "50hz_200p_slow_stair_v2.onnx"
+model_path: "50hz_200p_x3_v1.onnx"
+# model_path: "dex_dr_1_partial_c.onnx"
+# model_path: "policy.onnx"
 motor_num: 29        # 电机数量
 actions_size: 23     # action的大小
 dt: 0.01             # 控制循环周期 (100Hz FSM)
@@ -47,16 +51,17 @@ depth:
 
 gains:
   kp: [
-    200.0, 200.0, 150.0, 200.0, 30.0, 16.8,     # 左腿
-    200.0, 200.0, 150.0, 200.0, 30.0, 16.8,     # 右腿
-    300.0, 300.0, 300.0,                        # 腰
+    300.0, 300.0, 150.0, 330.0, 30.0, 16.8,     # 左腿
+    300.0, 300.0, 150.0, 330.0, 30.0, 16.8,     # 右腿
+    # 400.0, 400.0, 400.0,                        # 腰
+    200.0, 200.0, 200.0,                        # 腰
     100.0, 50.0, 50.0, 100.0, 50.0, 20.0, 20.0, # 左臂
     100.0, 50.0, 50.0, 100.0, 50.0, 20.0, 20.0  # 右臂
   ]
   kd: [
-    10.0, 10.0, 7.5, 10.0, 3.75, 2.1,
-    10.0, 10.0, 7.5, 10.0, 3.75, 2.1,
-    7.5, 10.0, 10.0,
+    10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+    10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+    5.0, 10.0, 10.0,
     5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0,
     5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0
   ]

@@ -1,0 +1,143 @@
+model_path: "policy_102000.onnx"
+motor_num: 29
+actions_size: 15
+dt: 0.01
+debug: false
+warm_start_time: 0.3
+xsense_data_roll_offset: 0.0
+
+joint_names: [
+  hip_roll_l_joint, hip_pitch_l_joint, hip_yaw_l_joint,
+  knee_pitch_l_joint, ankle_pitch_l_joint, ankle_roll_l_joint,
+  hip_roll_r_joint, hip_pitch_r_joint, hip_yaw_r_joint,
+  knee_pitch_r_joint, ankle_pitch_r_joint, ankle_roll_r_joint,
+  waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
+]
+
+joint_xml: [
+  hip_pitch_l_joint, hip_roll_l_joint, hip_yaw_l_joint,
+  knee_pitch_l_joint, ankle_pitch_l_joint, ankle_roll_l_joint,
+  hip_pitch_r_joint, hip_roll_r_joint, hip_yaw_r_joint,
+  knee_pitch_r_joint, ankle_pitch_r_joint, ankle_roll_r_joint,
+  waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
+  shoulder_pitch_l_joint, shoulder_roll_l_joint, shoulder_yaw_l_joint,
+  elbow_pitch_l_joint, elbow_yaw_l_joint, wrist_pitch_l_joint, wrist_roll_l_joint,
+  shoulder_pitch_r_joint, shoulder_roll_r_joint, shoulder_yaw_r_joint,
+  elbow_pitch_r_joint, elbow_yaw_r_joint, wrist_pitch_r_joint, wrist_roll_r_joint,
+]
+
+zero_pos_offset: [
+  0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+  0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+  0.0, 0.0, 0.0,
+  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+  0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+]
+
+ct_scale: [
+  2.1, 2.1, 3.207, 2.673, 2.6, 2.6,
+  2.1, 2.1, 3.207, 2.673, 2.6, 2.6,
+  3.207, 3.207, 3.207,
+  3.207, 2.28, 5.89, 5.89, 3.35, 2.3, 2.3,
+  3.207, 2.28, 5.89, 5.89, 3.35, 2.3, 2.3,
+]
+
+gait:
+  cycle: 0.85
+  left_air_ratio: 0.38
+  right_air_ratio: 0.38
+  left_phase_offset: 0.38
+  right_phase_offset: 0.88
+
+control:
+  action_scale: 0.25
+  decimation: 1
+
+normalization:
+  clip_scales:
+    clip_observations: 100.0
+    clip_actions: 100.0
+  obs_scales:
+    lin_vel: 1.0
+    ang_vel: 1.0
+    commands: 1.0
+    dof_pos: 1.0
+    dof_vel: 1.0
+    actions: 1.0
+
+size:
+  num_hist: 10
+  observations_size: 60
+
+gains:
+  kp: [
+    300.0, 300.0, 150.0,
+    330.0, 30.0, 16.8,
+    300.0, 300.0, 150.0,
+    330.0, 30.0, 16.8,
+    400.0, 400.0, 400.0,
+  ]
+  kd: [
+    10.0, 10.0, 5.0,
+    10.0, 2.5, 1.4,
+    10.0, 10.0, 5.0,
+    10.0, 2.5, 1.4,
+    5.0, 10.0, 10.0,
+  ]
+
+init_state:
+  default_joint_angles: [
+    0.0, -0.15, -0.0,
+    0.3, -0.15, 0.0,
+    0.0, -0.15, -0.0,
+    0.3, -0.15, 0.0,
+    0.0, 0.0, 0.0,
+  ]
+
+passive_joint_targets:
+  # Upper-body angles mirror BeyondZero's lion-head mount pose so the wrist
+  # spacing stays stable when switching between WalkLion and BeyondMimic.
+  shoulder_pitch_l_joint: {angle: -8.30429396e-01, kp: 150.0, kd: 4.0}
+  shoulder_roll_l_joint:  {angle: -2.25189712e-02, kp: 50.0, kd: 2.0}
+  shoulder_yaw_l_joint:   {angle: 0.0,   kp: 50.0, kd: 2.0}
+  elbow_pitch_l_joint:    {angle: -2.48733061e+00, kp: 150.0, kd: 4.0}
+  elbow_yaw_l_joint:      {angle: 8.76636756e-02, kp: 50.0,  kd: 2.0}
+  wrist_pitch_l_joint:    {angle: 8.76636756e-02, kp: 20.0,  kd: 2.0}
+  wrist_roll_l_joint:     {angle: 8.76636756e-02, kp: 20.0,  kd: 2.0}
+  shoulder_pitch_r_joint: {angle: -8.30429396e-01, kp: 150.0, kd: 4.0}
+  shoulder_roll_r_joint:  {angle: 0.0,  kp: 50.0, kd: 2.0}
+  shoulder_yaw_r_joint:   {angle: 0.0,   kp: 50.0, kd: 2.0}
+  elbow_pitch_r_joint:    {angle: -2.48733061e+00, kp: 150.0, kd: 4.0}
+  elbow_yaw_r_joint:      {angle: 8.76636756e-02, kp: 50.0,  kd: 2.0}
+  wrist_pitch_r_joint:    {angle: 8.76636756e-02, kp: 20.0,  kd: 2.0}
+  wrist_roll_r_joint:     {angle: 8.76636756e-02, kp: 20.0,  kd: 2.0}
+
+  # shoulder_pitch_l_joint: {angle: -1.46, kp: 150.0, kd: 5.0}
+  # shoulder_roll_l_joint:  {angle: 0.1,   kp: 50.0, kd: 2.5}
+  # shoulder_yaw_l_joint:   {angle: 0.0,   kp: 50.0, kd: 2.5}
+  # elbow_pitch_l_joint:    {angle: -1.57, kp: 150.0, kd: 5.0}
+  # elbow_yaw_l_joint:      {angle: 0.0,   kp: 50.0,  kd: 2.5}
+  # wrist_pitch_l_joint:    {angle: 0.0,   kp: 20.0,  kd: 2.0}
+  # wrist_roll_l_joint:     {angle: 0.0,   kp: 20.0,  kd: 2.0}
+  # shoulder_pitch_r_joint: {angle: -1.46, kp: 150.0, kd: 5.0}
+  # shoulder_roll_r_joint:  {angle: -0.1,  kp: 50.0, kd: 2.5}
+  # shoulder_yaw_r_joint:   {angle: 0.0,   kp: 50.0, kd: 2.5}
+  # elbow_pitch_r_joint:    {angle: -1.57, kp: 150.0, kd: 5.0}
+  # elbow_yaw_r_joint:      {angle: 0.0,   kp: 50.0,  kd: 2.5}
+  # wrist_pitch_r_joint:    {angle: 0.0,   kp: 20.0,  kd: 2.0}
+  # wrist_roll_r_joint:     {angle: 0.0,   kp: 20.0,  kd: 2.0}
+
+  # shoulder_pitch_l_joint: {angle: -1.46, kp: 300.0, kd: 10.0}
+  # shoulder_roll_l_joint:  {angle: 0.1,   kp: 150.0, kd: 7.5}
+  # shoulder_yaw_l_joint:   {angle: 0.0,   kp: 150.0, kd: 7.5}
+  # elbow_pitch_l_joint:    {angle: -1.57, kp: 300.0, kd: 10.0}
+  # elbow_yaw_l_joint:      {angle: 0.0,   kp: 80.0,  kd: 5.0}
+  # wrist_pitch_l_joint:    {angle: 0.0,   kp: 80.0,  kd: 5.0}
+  # wrist_roll_l_joint:     {angle: 0.0,   kp: 80.0,  kd: 5.0}
+  # shoulder_pitch_r_joint: {angle: -1.46, kp: 300.0, kd: 10.0}
+  # shoulder_roll_r_joint:  {angle: -0.1,  kp: 150.0, kd: 7.5}
+  # shoulder_yaw_r_joint:   {angle: 0.0,   kp: 150.0, kd: 7.5}
+  # elbow_pitch_r_joint:    {angle: -1.57, kp: 300.0, kd: 10.0}
+  # elbow_yaw_r_joint:      {angle: 0.0,   kp: 80.0,  kd: 5.0}
+  # wrist_pitch_r_joint:    {angle: 0.0,   kp: 80.0,  kd: 5.0}
+  # wrist_roll_r_joint:     {angle: 0.0,   kp: 80.0,  kd: 5.0}

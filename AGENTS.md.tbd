@@ -1,0 +1,105 @@
+# AGENTS.md
+
+xMIGCS 开发环境说明。新机器/容器上从零搭建环境时, 按本文档执行。
+
+## 网络注意
+
+本环境 `pypi.org` 可达但 `files.pythonhosted.org` 被墙, **pip 安装一律走清华镜像**:
+
+```bash
+-i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+## 创建 venv (从零)
+
+**不要用 `--system-site-packages`** — 它会把被污染的 `~/.local` 用户站点一并带入
+(历史上误装过错误平台的 wheel 和大量升级包), 且 pip 会因"已满足"而跳过安装。
+ROS 包改用 `.pth` 文件显式暴露, 用户站点则被完全隔离:
+
+```bash
+cd ~/Project/xhumanoid/xmigcs
+python3 -m venv .venv                                          # 隔离式 venv
+printf '/opt/ros/humble/lib/python3.10/site-packages\n/opt/ros/humble/local/lib/python3.10/dist-packages\n' \
+    > .venv/lib/python3.10/site-packages/ros_paths.pth         # 暴露 rclpy/bodyctrl_msgs
+.venv/bin/python -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
+.venv/bin/python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+.venv/bin/python -m pip install lib/ankle_control-0.1.0-py3-none-any.whl --no-deps
+```
+
+`.venv` 已在 `.gitignore` 中。
+
+## 依赖版本纪律
+
+`requirements.txt` 全部为 `==` 精确锁定 (以参考环境为准)。**禁止随意升级**:
+2026-08 曾因 `>=` 浮动约束导致机器人上被批量升级到不兼容大版本。改动版本需
+先在仿真验证。
+
+## 使用
+
+```bash
+source .venv/bin/activate          # 或直接 .venv/bin/python <script>
+```
+
+验证环境完整性:
+
+```bash
+.venv/bin/python -c "
+import numpy, scipy, cv2, onnxruntime, rclpy, ankle_control
+print('env OK')"
+```
+
+## 已知坑
+
+1. **libOrbbecSDK 版本冲突**: `/opt/ros/humble/lib` 里 ROS orbbec 驱动自带的
+   2.8.6 会被 `LD_LIBRARY_PATH` 优先链接, 导致 `import pyorbbecsdk` 报
+   `undefined symbol`。解决: import 前用 `ctypes.CDLL(..., RTLD_GLOBAL)` 预加载
+   wheel 自带的 `libOrbbecSDK.so.2` (按 soname 去重), 参见
+   `scripts/orbbec_depth.py` 的 `_preload_bundled_sdk()`。任何直接使用 SDK 的
+   新代码都必须先调用它。
+2. **相机直采不经 ROS**: 640x360 深度图对 ROS 话题传输开销过大, 部署端用
+   pyorbbecsdk2 单线程阻塞取流 (参考 `scripts/orbbec_depth.py` 的
+   `OrbbecDepthCamera`, 结构对齐 instinct_onboard 的 RealsenseCamera);
+   仿真端仍走 `depth_camera/image_raw` ROS 话题, 两路互不影响。
+   336L 实测支持 640x360@30 原生深度档。
+3. **ros2 CLI 等工具仍走系统 Python**, 不受 venv 影响; venv 内只装项目依赖。
+4. **相机卡死(uvc busy / deviceMgr NULL)恢复**: 进程未经 `pipeline.stop()`
+   退出(SIGTERM/崩溃)会残留 SDK 的跨进程锁。恢复: 拔插相机 USB +
+   `rm -f /dev/shm/orbbec_device_lock`。连续快速切换多个流档位也可能触发,
+   档位切换之间留间隔。任何用 SDK 的脚本都要处理 SIGTERM(见
+   `scripts/orbbec_depth.py` main 开头)。
+5. **深度流档位**: 336L 的 16:9 档位(1280x720/848x480/640x360/480x270/424x240)
+   为同一传感器面积的降采样, **FOV 相同**(16:9 组内换分辨率不影响投影);
+   4:3/16:10 档位(640x480/640x400/1280x800)FOV 不同。序列号经
+   `device.get_device_info().get_serial_number()` 获取 (2.1.2 wheel 无
+   `Context.get_device_by_serial_number`)。
+6. **仿真必须用 rl_control_node_sim.py, 真机才用 rl_control_node.py**:
+   两者唯一实质区别是 sim 标志(sim 节点构造后置 True)。sim=false 时
+   robot_interface 会执行真机并联踝关节求解(ankle_control.FuncSPTrans,
+   pyarmor 加密库, 报错字符串 grep 不到)。MuJoCo 模型的踝关节是串联表达、
+   数值不在并联机构工作空间内, 策略输出进入求解器即发散, 打印
+   `ErrorID00/01 : Cannot solved !` 并以错误值继续运行 —— 真机部署前应
+   为该求解失败增加保护(保持上一拍有效值或工作空间限幅)。
+   sim 标志现经 `XMIGCSControlNode(debug, sim=...)` 构造参数在控制线程
+   启动前覆盖(节点与接口两处), 不再依赖构造后赋值(有启动竞态)。
+7. **SHM 生命周期与 resource_tracker(3.10.12)**: `SharedMemory.unlink()`
+   内部会自动 unregister; **attach 也会向本进程 tracker 注册且 tracker 不做
+   引用计数** —— 父/子进程共享同一 tracker 时, 子进程任何 unregister 都会
+   抢删父进程的注册记录(父进程退出时 tracker 报 KeyError 崩溃); tracker
+   各自独立时子进程退出又会重复 unlink 报 ENOENT. 因此相机子进程用原始
+   `_posixshmem.shm_open` attach(完全绕开 tracker), 生命周期唯一归父进程
+   的 create/unlink 管理. 不要"修复"退出时的 unregister —— 手动注销必错.
+   另: 父进程 start() 子进程后必须立刻 close 自己的 child_conn 副本,
+   否则子进程早夭(如 uvc busy)时握手 recv() 等不到 EOF, fail-fast 死锁.
+8. **cv 调试窗口必须在主线程(spin), 无一例外**: cv2 的 Qt 后端要求窗口的
+   创建/刷新/销毁同线程. 所有调试帧(相机帧 + 策略处理帧如 WALKDEPTH)由
+   节点 5Hz ROS 定时器 pump_debug_vis() 在主线程显示; 策略/控制线程只把
+   可视化数组写入 robot_data_.policy_vis_frame_ 等槽位. **控制线程直接
+   cv2.imshow 会与主线程窗口死锁, 冻结整个控制循环**(WALKDEPTH 曾因此
+   卡死). 调试卡死时: `kill -USR1 <pid>` 打印全部线程栈(faulthandler,
+   rl_control_node 模块级注册).
+
+## 相机测试
+
+```bash
+.venv/bin/python scripts/orbbec_depth.py          # cv2.imshow 显示, q/ESC 退出
+```

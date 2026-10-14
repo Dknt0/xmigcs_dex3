@@ -35,44 +35,10 @@ class FSMStateBeyondZero(FSMState):
         self.interp_step = float(config.get("interp_step", 0.001))
         self.interp_max = float(config.get("interp_max", 1.0))
 
-        # Explicitly define the 29-joint zero target positions
-        # These values are based on the default joint positions expanded to 29 elements.
-        # Adjust the array below as needed to specify your desired initial target positions for all 29 joints.
-        # For example, positions for controllable joints are set from defaults, others to 0.0.
-        self.zero_target = np.array([
-            -0.94777486,  # hip_pitch_l_joint
-            0.15228635,   # hip_roll_l_joint
-            -0.11064088,   # hip_yaw_l_joint
-            0.70493567,   # knee_pitch_l_joint
-            -0.07427792,  # ankle_pitch_l_joint
-            -0.08085743,   # ankle_roll_l_joint
-            -0.94510548,  # hip_pitch_r_joint
-            -0.19115149,   # hip_roll_r_joint
-            0.01340432,   # hip_yaw_r_joint
-            0.79190012,   # knee_pitch_r_joint
-            -0.19874191,  # ankle_pitch_r_joint
-            0.02820061,   # ankle_roll_r_joint
-            -0.0,   # waist_yaw_joint
-            -0.0,   # waist_roll_joint
-            0.17578462,   # waist_pitch_joint
-            -1.01426013,   # shoulder_pitch_l_joint
-            0.000,  # shoulder_roll_l_joint (adjusted example)
-            0.000,   # shoulder_yaw_l_joint
-            -1.78047789,   # elbow_pitch_l_joint
-            0.0,
-            0.0,
-            0.0,
-            -1.01426013,   # shoulder_pitch_r_joint
-            0.000,   # shoulder_roll_r_joint
-            0.000,   # shoulder_yaw_r_joint
-            -1.78047789,   # elbow_pitch_r_joint
-            0.000,   # Additional joints (e.g., wrists or others, set to 0.0)
-            0.000,
-            0.000    # Last joint
-        ], dtype=np.float32)
-
-        # If preferred, load from config instead of hardcoding:
-        # self.zero_target = np.array(config.get("zero_target", self.zero_target.tolist()), dtype=np.float32)
+        # Robot-proven onboard BeyondZero target.  It lives in YAML because
+        # WalkLion passive upper-body targets and the policy bridge also use
+        # this pose as the shared lion-head mount reference.
+        self.zero_target = np.array(config["zero_target"], dtype=np.float32)
 
         if len(self.zero_target) != self.motor_nums:
             raise ValueError(f"Specified zero_target length ({len(self.zero_target)}) does not match motor_nums ({self.motor_nums}).")
@@ -97,12 +63,12 @@ class FSMStateBeyondZero(FSMState):
             pos_cmd = target
 
         joint_start_idx = 35 - self.motor_nums
-        self.robot_data_.q_d_[joint_start_idx:] = pos_cmd
-        self.robot_data_.q_dot_d_[joint_start_idx:] = 0.0
-        self.robot_data_.tau_d_[joint_start_idx:] = 0.0
+        self.robot_data_.q_d_s_[joint_start_idx:] = pos_cmd
+        self.robot_data_.q_dot_d_s_[joint_start_idx:] = 0.0
+        self.robot_data_.tau_d_s_[joint_start_idx:] = 0.0
 
-        self.robot_data_.joint_kp_p_[:self.motor_nums] = self.kps
-        self.robot_data_.joint_kd_p_[:self.motor_nums] = self.kds
+        self.robot_data_.joint_kp_s_[:self.motor_nums] = self.kps
+        self.robot_data_.joint_kd_s_[:self.motor_nums] = self.kds
 
     def on_exit(self):
         print("[FSMStateBeyondZero] Exit BeyondZero state")
@@ -117,5 +83,7 @@ class FSMStateBeyondZero(FSMState):
             return FSMStateName.BEYONDMIMIC
         elif flag.fsm_state_command == "gotoBEYONDZERO":
             return FSMStateName.BEYONDZERO
+        elif flag.fsm_state_command == "gotoLIONZERO":
+            return FSMStateName.LIONZERO
         else:
             return None

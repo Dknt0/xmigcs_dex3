@@ -50,7 +50,7 @@ class FSMStateZero(FSMState):
     def run(self, flag: ControlFlag):
         if self.robot_data_ is None:
             return
-        q_est = self.robot_data_.q_a_[-self.motor_num_:]  # numpy数组切片
+        q_est = self.robot_data_.q_a_s_[-self.motor_num_:]  # numpy数组切片
         if getattr(flag, 'height_control', False):
             self.zero_positions = self.zero_positions_height_
         else:
@@ -60,11 +60,11 @@ class FSMStateZero(FSMState):
             self.q_factor_ = min(self.q_factor_ + self.interp_step_, self.interp_max_)
         else:
             pos_cmd = self.zero_positions
-        self.robot_data_.q_d_[-self.motor_num_:] = pos_cmd
-        self.robot_data_.q_dot_d_[-self.motor_num_:] = 0
-        self.robot_data_.tau_d_[-self.motor_num_:] = 0
-        self.robot_data_.joint_kp_p_[:self.motor_num_] = self.kp_pos_
-        self.robot_data_.joint_kd_p_[:self.motor_num_] = self.kd_pos_
+        self.robot_data_.q_d_s_[-self.motor_num_:] = pos_cmd
+        self.robot_data_.q_dot_d_s_[-self.motor_num_:] = 0
+        self.robot_data_.tau_d_s_[-self.motor_num_:] = 0
+        self.robot_data_.joint_kp_s_[:self.motor_num_] = self.kp_pos_
+        self.robot_data_.joint_kd_s_[:self.motor_num_] = self.kd_pos_
 
     def on_exit(self):
         print("[FSMStateZero] Exit zero position control state")
@@ -75,9 +75,11 @@ class FSMStateZero(FSMState):
             return FSMStateName.STOP
         elif flag.fsm_state_command == "gotoWALKAMP":
             return FSMStateName.WALKAMP
-        elif flag.fsm_state_command == "gotoSTAND":
-            return FSMStateName.STAND
         elif flag.fsm_state_command == "gotoZERO":
             return FSMStateName.ZERO
+        elif flag.fsm_state_command == "gotoBEYONDZERO":
+            return FSMStateName.BEYONDZERO
+        elif flag.fsm_state_command == "gotoLIONZERO":
+            return FSMStateName.LIONZERO
         else:
             return None  # 无状态转换

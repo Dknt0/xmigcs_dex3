@@ -1,0 +1,87 @@
+# 深度感知行走策略 (perceptive locomotion, Instinct510 dex23dof_depth training)
+# 移植自 bitbot_gz checkpoint/dex/encoder_actor_critic.onnx + robot_dex.yaml policy_walking
+model_path: "100hz_400p_slow_stair_v2.onnx"
+# model_path: "dex_dr_1_partial_c.onnx"
+# model_path: "policy.onnx"
+motor_num: 29        # 电机数量
+actions_size: 23     # action的大小
+dt: 0.01             # 控制循环周期 (100Hz FSM)
+warm_start_time: 0.3
+joint_names: [
+  hip_pitch_l_joint, hip_pitch_r_joint, waist_yaw_joint,
+  hip_roll_l_joint, hip_roll_r_joint, waist_roll_joint,
+  hip_yaw_l_joint, hip_yaw_r_joint, waist_pitch_joint,
+  knee_pitch_l_joint, knee_pitch_r_joint,
+  shoulder_pitch_l_joint, shoulder_pitch_r_joint,
+  ankle_pitch_l_joint, ankle_pitch_r_joint,
+  shoulder_roll_l_joint, shoulder_roll_r_joint,
+  ankle_roll_l_joint, ankle_roll_r_joint,
+  shoulder_yaw_l_joint, shoulder_yaw_r_joint,
+  elbow_pitch_l_joint, elbow_pitch_r_joint
+]
+
+control:
+  action_scale: 0.25
+  decimation: 1                  # 100Hz / 2 = 50Hz 策略频率 (control_period 0.02)
+  warm_start_time: 0.3
+
+normalization:
+  clip_scales:
+    clip_observations: 100.0
+    clip_actions: 18.0           # ovinf_hike.cc clip_action
+  obs_scales:
+    lin_vel: 1.0
+    ang_vel: 0.25
+    command: 1.0
+    dof_pos: 1.0
+    dof_vel: 0.05
+    proj_gravity: 1.0
+
+size:
+  num_hist: 8                    # 本体感知历史帧数
+  observations_size: 78          # 单帧观测 = 3 + 23*3 + 6
+
+depth:
+  num_images: 8                  # 深度历史帧数
+  image_skip: 10                 # 历史帧间隔(策略tick数), 10*0.02s = 0.2s
+  debug_vis: false                # 弹窗显示送入策略的 32x18 处理帧
+  # 相机分辨率/裁剪/模糊/归一化参数见 config/dex_config.yaml 的 robot_interface.depth
+
+gains:
+  kp: [
+    300.0, 300.0, 150.0, 330.0, 30.0, 16.8,     # 左腿
+    300.0, 300.0, 150.0, 330.0, 30.0, 16.8,     # 右腿
+    400.0, 400.0, 400.0,                        # 腰
+    100.0, 50.0, 50.0, 100.0, 50.0, 20.0, 20.0, # 左臂
+    100.0, 50.0, 50.0, 100.0, 50.0, 20.0, 20.0  # 右臂
+  ]
+  kd: [
+    10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+    10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+    5.0, 10.0, 10.0,
+    5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0,
+    5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0
+  ]
+
+init_state:
+  default_joint_angles: [
+    -0.25, -0.25, 0.0,
+    0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0,
+    0.5, 0.5,
+    0.0, 0.0,
+    -0.25, -0.25,
+    0.3, -0.3,
+    0.0, 0.0,
+    0.0, 0.0,
+    -0.3, -0.3
+  ]
+
+# 策略外关节(手臂/手腕)的保持角(29维, mujoco xml 顺序) — robot_dex.yaml defult_init_pos
+hold_joint_angles: [
+  -0.25, 0.0, 0.0, 0.5, -0.25, 0.0,
+  -0.25, 0.0, 0.0, 0.5, -0.25, 0.0,
+  0.0, 0.0, 0.0,
+  0.1, 0.3, 0.0, -0.4, 0.0, 0.0, 0.0,
+  0.1, -0.3, 0.0, -0.4, 0.0, 0.0, 0.0
+]

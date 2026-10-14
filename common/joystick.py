@@ -5,6 +5,8 @@ Python equivalent of the C++ Joystick functionality for ROS Joy messages
 import os
 import yaml
 import threading
+import copy
+import time
 from dataclasses import dataclass
 from typing import Optional
 import rclpy
@@ -14,10 +16,18 @@ import numpy as np
 
 @dataclass
 class ControlFlag:
-    """手柄控制标志"""
+    """Controller command consumed by RobotInterface and FSM states.
+
+    All controller adapters expose the same walk-command fields.  RobotInterface
+    decides whether the current FSM state is allowed to consume them.
+    """
     fsm_state_command: str = "gotoZERO"
+    # fsm_state_command: str = "gotoLIONZERO"
     # 禁用、启用手柄控制标志
     enable: bool = True
+    x_speed_command: float = 0.0
+    y_speed_command: float = 0.0
+    yaw_speed_command: float = 0.0
 
 @dataclass
 class YUNZHUOMap:
@@ -52,7 +62,13 @@ class YUNZHUOFlag(ControlFlag):  # 继承ControlFlag
 
 
 class JoystickHumanoid:
-    """人形机器人手柄控制器 (ROS Joy版本)"""
+    """YUNZHUO joystick adapter for ROS Joy messages.
+
+    This adapter translates raw SBUS axes into a shared `ControlFlag`.  It does
+    not decide whether a velocity command is safe to apply; RobotInterface gates
+    that by FSM state.  Local safety still zeros commands when input is disabled
+    or the Joy stream goes stale.
+    """
 
     def __init__(self):
         print("Joystick Start")
@@ -74,6 +90,10 @@ class JoystickHumanoid:
         self.max_x_minus_speed = 0.0
         self.max_y_speed = 0.0
         self.max_yaw_speed = 0.0
+        # If no Joy message arrives for this long, treat command input as lost
+        # and publish a disabled zero-speed flag.
+        self.command_timeout_s = 0.5
+        self.last_msg_time = 0.0
         # 高度平滑控制
         self.target_height = 0.0
 
@@ -102,6 +122,7 @@ class JoystickHumanoid:
         self.max_x_minus_speed = joystick_cfg.get("max_x_minus_speed")
         self.max_y_speed = joystick_cfg.get("max_y_speed")
         self.max_yaw_speed = joystick_cfg.get("max_yaw_speed")
+        self.command_timeout_s = joystick_cfg.get("command_timeout_s", 0.5)
         self.max_height = joystick_cfg.get("max_height")
         self.min_height = joystick_cfg.get("min_height")
 
@@ -113,6 +134,7 @@ class JoystickHumanoid:
                 f"max_x_minus_speed: {self.max_x_minus_speed}, "
                 f"max_y_speed: {self.max_y_speed}, "
                 f"max_yaw_speed: {self.max_yaw_speed}, "
+                f"command_timeout_s: {self.command_timeout_s}, "
                 f"max_height: {self.max_height},"
                 f"min_height: {self.min_height}")
 
@@ -140,6 +162,7 @@ class JoystickHumanoid:
                     y1=msg.axes[2] if len(msg.axes) > 2 else 0.0,
                     y2=msg.axes[1] if len(msg.axes) > 0 else 0.0)
                 self.joy_map = yunzhuo_map
+                self.last_msg_time = time.monotonic()
 
     def joy_flag_update(self):
         """根据手柄输入更新控制标志"""
@@ -147,37 +170,73 @@ class JoystickHumanoid:
             # 更新手柄启动标志
             if self.joy_map.f == -1.0:
                 self.joy_flag.enable = False
+                self._zero_walk_speed_command()
             else:
                 self.joy_flag.enable = True
+                # Walk commands must keep updating even while a modifier switch
+                # such as g is held for Lion policy control.
+                self.get_x_y_yaw_speed_command()
             # FSM状态切换命令
             if self.joy_map.c == 1.0:
                 self.joy_flag.fsm_state_command = "gotoSTOP"
             else:
                 button_pressed_nums = self.check_button_pressed_nums(
                     self.joy_map)
+                if self._policyzero_chord_pressed():
+                    # Isolated g+h enters the one-trigger policy bridge.  Do
+                    # not accept g+h mixed with a/b/d/e/f, because those chords
+                    # are legacy policy selectors or local disable modifiers.
+                    self.joy_flag.fsm_state_command = "gotoPOLICYZERO"
                 if button_pressed_nums == 0:
                     if self.joy_map.d == 1.0:
-                        self.joy_flag.fsm_state_command = "gotoZERO"
+                        # Onboard legacy shortcut: D enters the BeyondMimic
+                        # prep pose.  Keep this stable so older policies have
+                        # the same operator path after WalkLion merge.
+                        self.joy_flag.fsm_state_command = "gotoBEYONDZERO"
                     elif self.joy_map.a == 1.0:
-                        self.joy_flag.fsm_state_command = "gotoWALKAMP"
-                    # 获取walk速度命令
-                    self.get_x_y_yaw_speed_command()
+                        # Onboard legacy shortcut: A starts BeyondMimic.
+                        self.joy_flag.fsm_state_command = "gotoBEYONDMIMIC"
                     # 获取高度命令
                     self.get_walk_height_command()
                 if button_pressed_nums == 1:
                     if self.joy_map.e == -1.0:
-                        #e上拨
+                        # E-up modifier keeps the original alternate walking
+                        # controls: E+A -> WALKAMP, E+D -> ZERO.
                         if self.joy_map.a == 1.0:
-                            self.joy_flag.fsm_state_command = "gotoBEYONDMIMIC"
+                            self.joy_flag.fsm_state_command = "gotoWALKAMP"
                         elif self.joy_map.d == 1.0:
-                            self.joy_flag.fsm_state_command = "gotoBEYONDZERO"
+                            self.joy_flag.fsm_state_command = "gotoZERO"
+                    elif self.joy_map.g == -1.0:
+                        # g is the Lion policy modifier:
+                        #   g+d -> prep pose, g+a -> WalkLion, g+b -> WalkLionDWAQ.
+                        # Non-LIONZERO states only accept gotoLIONZERO, so direct
+                        # policy commands remain gated by FSM transition rules.
+                        if self.joy_map.d == 1.0:
+                            self.joy_flag.fsm_state_command = "gotoLIONZERO"
+                        elif self.joy_map.a == 1.0:
+                            self.joy_flag.fsm_state_command = "gotoWALKLION"
+                        elif self.joy_map.b == 1.0:
+                            self.joy_flag.fsm_state_command = "gotoWALKLIONDWAQ"
 
 
 
     def get_joy_flag(self) -> ControlFlag:
-        """获取当前手柄标志"""
+        """Return a snapshot of the current flag, zeroing stale input first."""
         with self.data_mutex:
-            return self.joy_flag
+            if self._is_command_stale():
+                self.joy_flag.enable = False
+                self._zero_walk_speed_command()
+            return copy.deepcopy(self.joy_flag)
+
+    def _is_command_stale(self) -> bool:
+        """Return True when the ROS Joy stream has stopped updating."""
+        return time.monotonic() - self.last_msg_time > self.command_timeout_s
+
+    def _zero_walk_speed_command(self):
+        """Clear velocity commands without changing the requested FSM state."""
+        self.joy_flag.x_speed_command = 0.0
+        self.joy_flag.y_speed_command = 0.0
+        self.joy_flag.yaw_speed_command = 0.0
 
     def init(self) -> int:
         """初始化手柄控制器"""
@@ -196,6 +255,22 @@ class JoystickHumanoid:
         if joy_map.h != 0.0:
             count += 1
         return count
+
+    def _policyzero_chord_pressed(self) -> bool:
+        """Return True only for the isolated g+h bridge chord.
+
+        The bridge auto-switches policies after entry, so a mixed chord must
+        not steal g+d/a/b legacy commands or f disable handling.
+        """
+        return (
+            self.joy_map.g <= -0.5
+            and abs(self.joy_map.h) >= 0.5
+            and abs(self.joy_map.e) < 0.5
+            and abs(self.joy_map.f) < 0.5
+            and self.joy_map.a < 0.5
+            and self.joy_map.b < 0.5
+            and self.joy_map.d < 0.5
+        )
 
     def get_x_y_yaw_speed_command(self):
         """获取当前速度命令"""

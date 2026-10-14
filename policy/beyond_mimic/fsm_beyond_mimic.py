@@ -1,3 +1,4 @@
+from common.control_timing import TickDecimator
 from FSM.fsm_base import FSMState, FSMStateName
 import numpy as np
 import yaml
@@ -68,6 +69,8 @@ class FSMStateBeyondMimic(FSMState):
             # self.history_length = config["history_length"]
             self.physical_dt = config["physical_dt"]
             self.decimation_ = config["decimation"]
+            self._inference_clock = TickDecimator(
+                self.decimation_, self.physical_dt, self.robot_data_.control_dt_)
             self.num_actions = config["num_actions"]
             self.motor_nums = config["motor_nums"]
             self.warm_start_time = config["warm_start_time"]
@@ -181,8 +184,24 @@ class FSMStateBeyondMimic(FSMState):
 
             # 从实验室顺序映射到MjXUML顺序
             self.joint_pos_array = np.array([self.joint_pos_array_seq[self.joint_seq.index(joint)] for joint in self.joint_xml])
+            # self.stiffness_array = np.array([self.stiffness_array_seq[self.joint_seq.index(joint)] for joint in self.joint_xml])
+            # self.damping_array = np.array([self.damping_array_seq[self.joint_seq.index(joint)] for joint in self.joint_xml])
+            
+            # 设置其他参数
+            # self.kps_lab = self.stiffness_array_seq
+            # self.kds_lab = self.damping_array_seq
             self.default_angles_lab = self.joint_pos_array_seq
             self.action_scale_lab = self.action_scale
+            # self.tau_limit = np.array(config["tau_limit"], dtype=np.float32)
+            
+            # self.num_actions = len(self.mj2lab)
+            # self.num_obs = 154  # 根据sim2sim代码固定为154
+
+            # 重新初始化与 num_actions 相关的数组
+            # self.qj_obs = np.zeros(self.num_actions, dtype=np.float32)
+            # self.dqj_obs = np.zeros(self.num_actions, dtype=np.float32)
+            # self.obs = np.zeros(self.num_obs)
+            # self.action = np.zeros(self.num_actions)
 
             print("BeyondMimic-like policy initializing ...")
             self._warmup_inference_counter = 0
@@ -197,6 +216,7 @@ class FSMStateBeyondMimic(FSMState):
             self._final_ref_body_ang_vel_w = np.zeros_like(self.ref_body_ang_vel_w)
     
     def on_enter(self):
+        self._inference_clock.reset()
         self.ref_motion_phase = 0.
         self.motion_time = 0
         self.counter_step = 0
@@ -450,11 +470,11 @@ class FSMStateBeyondMimic(FSMState):
 
         # Set joint commands exactly like C++
         for i in range(self.motor_nums):
-            # C++: robot_data_->q_d_(35 - motor_num_ + i)
+            # C++: robot_data_->q_d_s_(35 - motor_num_ + i)
             joint_idx = 35 - self.motor_nums + i
-            self.robot_data_.q_d_[joint_idx] = target_dof_pos_mj[i]
-            self.robot_data_.q_dot_d_[joint_idx] = 0.0
-            self.robot_data_.tau_d_[joint_idx] = 0.0
+            self.robot_data_.q_d_s_[joint_idx] = target_dof_pos_mj[i]
+            self.robot_data_.q_dot_d_s_[joint_idx] = 0.0
+            self.robot_data_.tau_d_s_[joint_idx] = 0.0
 
         # update motion phase
         self.counter_step += 1
@@ -481,7 +501,7 @@ class FSMStateBeyondMimic(FSMState):
         self.ref_body_ang_vel_w = np.array(self._final_ref_body_ang_vel_w, copy=True)
 
     def run(self, flag: ControlFlag):
-        if int(self.robot_data_.time_now_ / self.physical_dt) % self.decimation_ == 0:
+        if self._inference_clock.step():
             current_time = time.perf_counter()
             print(f"Inference hz: {1/(current_time - self.last_run_time)}")
             self.last_run_time = current_time
@@ -489,8 +509,8 @@ class FSMStateBeyondMimic(FSMState):
         self.set_kp_kd()
     def set_kp_kd(self):
         # Set kp/kd gains
-        self.robot_data_.joint_kp_p_[:self.motor_nums] = self.kps
-        self.robot_data_.joint_kd_p_[:self.motor_nums] = self.kds
+        self.robot_data_.joint_kp_s_[:self.motor_nums] = self.kps
+        self.robot_data_.joint_kd_s_[:self.motor_nums] = self.kds
     def on_exit(self):
         self.action = np.zeros(self.num_actions, dtype=np.float32)
         # self.action_buf = np.zeros(23 * self.history_length, dtype=np.float32)
@@ -513,8 +533,14 @@ class FSMStateBeyondMimic(FSMState):
             return FSMStateName.BEYONDMIMIC
         elif flag.fsm_state_command == "gotoBEYONDZERO":
             return FSMStateName.BEYONDZERO
-        elif flag.fsm_state_command == "gotoWALKAMP":
-            return FSMStateName.WALKAMP
+        elif flag.fsm_state_command == "gotoMLP":
+            return FSMStateName.MLP
+        elif flag.fsm_state_command == "gotoLIONZERO":
+            return FSMStateName.LIONZERO
+        elif flag.fsm_state_command == "gotoPOLICYZERO":
+            return FSMStateName.POLICYZERO
+        elif flag.fsm_state_command == "gotoWALKLION":
+            return FSMStateName.WALKLION
         else:
             return None  # 无状态转换
 

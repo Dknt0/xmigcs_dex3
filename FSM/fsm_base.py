@@ -14,8 +14,15 @@ class FSMStateName(Enum):
     STOP = 0      # 停止状态
     ZERO = 1      # 零位状态
     WALKAMP = 2   # WALKAMP策略状态
-    WALKDEPTH = 3 # 深度感知行走策略状态
-    STAND = 4     # 站立/迈步策略状态
+    BEYONDMIMIC = 3  # beyondMimic策略状态
+    BEYONDZERO = 4  # beyondZero策略状态
+    WALKLION = 5  # walkLion策略状态
+    WALKLIONDWAQ = 6  # walkLionDWAQ策略状态
+    LIONZERO = 7  # shared prep pose before walkLion policies
+    POLICYZERO = 8  # smooth bridge between WalkLion-series and BeyondMimic
+    WALKDEPTH = 9 # 深度感知行走策略状态
+    STAND = 10     # 站立/迈步策略状态
+    WALKDEPTH100HZ = 11 # 深度感知行走策略状态
 
 class FSMState(ABC):
     """FSM状态抽象基类"""

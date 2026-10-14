@@ -4,6 +4,32 @@ motor_nums: 29
 interp_step: 0.01
 interp_max: 1.0
 
+joint_xml: [
+  hip_pitch_l_joint, hip_roll_l_joint, hip_yaw_l_joint,
+  knee_pitch_l_joint, ankle_pitch_l_joint, ankle_roll_l_joint,
+  hip_pitch_r_joint, hip_roll_r_joint, hip_yaw_r_joint,
+  knee_pitch_r_joint, ankle_pitch_r_joint, ankle_roll_r_joint,
+  waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
+  shoulder_pitch_l_joint, shoulder_roll_l_joint, shoulder_yaw_l_joint,
+  elbow_pitch_l_joint, elbow_yaw_l_joint, wrist_pitch_l_joint, wrist_roll_l_joint,
+  shoulder_pitch_r_joint, shoulder_roll_r_joint, shoulder_yaw_r_joint,
+  elbow_pitch_r_joint, elbow_yaw_r_joint, wrist_pitch_r_joint, wrist_roll_r_joint,
+]
+
+# Robot-proven onboard pose for the xiaotou BeyondMimic policy.  WalkLion
+# passive upper-body targets and bridge interpolation use the same upper-body
+# values so the lion-head wrist spacing stays consistent across policy swaps.
+zero_target: [
+  -4.64177074e-01,  1.83527237e-01, -9.06601064e-02,  7.34527929e-01,
+  -3.91142402e-01, -1.41642449e-01, -3.57034659e-01, -1.83549407e-01,
+  -2.76978068e-01,  6.63481227e-01, -3.96527622e-01, -9.89164334e-02,
+  -8.28196095e-02,  4.00276569e-04,  1.45779616e-01, -8.30429396e-01,
+  -2.25189712e-02,  0.0, -2.48733061e+00,  8.76636756e-02,
+   8.76636756e-02,  8.76636756e-02, -8.30429396e-01,  0.0,
+   0.0, -2.48733061e+00,  8.76636756e-02,  8.76636756e-02,
+   8.76636756e-02,
+]
+
 locked_joint_map : [
  0, 1, 2, 3, 4, 5,
  6, 7, 8, 9, 10, 11,
@@ -27,4 +53,3 @@ kds: [
         5, 2.5, 2.5, 5,5,2,2,
         5, 2.5, 2.5, 5,5,2,2,
 ]
-

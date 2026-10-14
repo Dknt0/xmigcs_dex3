@@ -1,0 +1,44 @@
+motor_num: 29
+dt: 0.01
+
+# POLICYZERO is a one-trigger safety bridge between WALKLION and BEYONDMIMIC.
+# There is no online FK/support-polygon safety model in this repo, so these
+# limits use conservative joint-space deltas as the real-robot safety proxy:
+#   1. tiny target delta: hard-switch directly into the target policy;
+#   2. bounded target delta: run one short quintic blend, then auto-switch;
+#   3. oversized target delta: reject before leaving the source policy.
+smooth_duration_s: 0.45
+direct_switch_delta_rad: 0.08
+smooth_switch_max_delta_rad: 0.65
+leg_delta_limit_rad: 0.55
+waist_delta_limit_rad: 0.35
+upper_delta_limit_rad: 0.20
+entry_tolerance_rad: 0.65
+
+joint_xml: [
+  hip_pitch_l_joint, hip_roll_l_joint, hip_yaw_l_joint,
+  knee_pitch_l_joint, ankle_pitch_l_joint, ankle_roll_l_joint,
+  hip_pitch_r_joint, hip_roll_r_joint, hip_yaw_r_joint,
+  knee_pitch_r_joint, ankle_pitch_r_joint, ankle_roll_r_joint,
+  waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
+  shoulder_pitch_l_joint, shoulder_roll_l_joint, shoulder_yaw_l_joint,
+  elbow_pitch_l_joint, elbow_yaw_l_joint, wrist_pitch_l_joint, wrist_roll_l_joint,
+  shoulder_pitch_r_joint, shoulder_roll_r_joint, shoulder_yaw_r_joint,
+  elbow_pitch_r_joint, elbow_yaw_r_joint, wrist_pitch_r_joint, wrist_roll_r_joint,
+]
+
+kp_pos: [
+  400.0, 400.0, 250.0, 350.0, 30.0, 16.8,
+  400.0, 400.0, 250.0, 350.0, 30.0, 16.8,
+  400.0, 400.0, 400.0,
+  150.0, 50.0, 50.0, 150.0, 150.0, 200.0, 200.0,
+  150.0, 50.0, 50.0, 150.0, 150.0, 200.0, 200.0,
+]
+
+kd_pos: [
+  10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+  10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+  5.0, 10.0, 10.0,
+  5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0,
+  5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0,
+]

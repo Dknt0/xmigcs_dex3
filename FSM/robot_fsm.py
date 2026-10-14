@@ -5,12 +5,17 @@ Complete FSM implementation with state management
 from typing import Dict
 from .fsm_base import RobotFSM, FSMStateName
 from policy.walk_amp.fsm_walkamp import FSMStateWALKAMP
-from policy.walk_depth.fsm_walkdepth import FSMStateWALKDEPTH
-from policy.stand.fsm_stand import FSMStateSTAND
 from policy.zero.fsm_zero import FSMStateZero
 from policy.stop.fsm_stop import FSMStateStop
 from policy.beyond_mimic.fsm_beyond_mimic import FSMStateBeyondMimic
 from policy.beyondzero.fsm_beyondzero import FSMStateBeyondZero
+from policy.walk_lion.fsm_walklion import FSMStateWalkLion
+from policy.walk_lion_dwaq.fsm_walklion_dwaq import FSMStateWalkLionDwaq
+from policy.lionzero.fsm_lionzero import FSMStateLionZero
+from policy.policyzero.fsm_policyzero import FSMStatePolicyZero
+from policy.walk_depth.fsm_walkdepth import FSMStateWALKDEPTH
+from policy.stand.fsm_stand import FSMStateSTAND
+from policy.walk_depth_100hz.fsm_walkdepth_100hz import FSMStateWALKDEPTH100HZ
 from common.robot_data import RobotData
 from common.joystick import ControlFlag
 import functools
@@ -52,10 +57,17 @@ class RobotFSMImpl(RobotFSM):
         self.state_objects[FSMStateName.STOP] = FSMStateStop(self.robot_data_)
         self.state_objects[FSMStateName.ZERO] = FSMStateZero(self.robot_data_)
         self.state_objects[FSMStateName.WALKAMP] = FSMStateWALKAMP(self.robot_data_)
+        self.state_objects[FSMStateName.BEYONDMIMIC] = FSMStateBeyondMimic(self.robot_data_)
+        self.state_objects[FSMStateName.BEYONDZERO] = FSMStateBeyondZero(self.robot_data_)
+        self.state_objects[FSMStateName.WALKLION] = FSMStateWalkLion(self.robot_data_)
+        self.state_objects[FSMStateName.WALKLIONDWAQ] = FSMStateWalkLionDwaq(self.robot_data_)
+        self.state_objects[FSMStateName.LIONZERO] = FSMStateLionZero(self.robot_data_)
+        self.state_objects[FSMStateName.POLICYZERO] = FSMStatePolicyZero(self.robot_data_)
         self.state_objects[FSMStateName.WALKDEPTH] = FSMStateWALKDEPTH(self.robot_data_)
         self.state_objects[FSMStateName.STAND] = FSMStateSTAND(self.robot_data_)
-
+        self.state_objects[FSMStateName.WALKDEPTH100HZ] = FSMStateWALKDEPTH100HZ(self.robot_data_)
         # TODO: 添加其他状态对象
+
     # @timing_decorator
     def run_fsm(self, flag: ControlFlag):
         """运行FSM"""
@@ -66,12 +78,23 @@ class RobotFSMImpl(RobotFSM):
         # 如果需要状态转换
         if next_state is not None and next_state != self.current_state:
             if next_state in self.state_objects:
+                next_state_obj = self.state_objects[next_state]
+                if hasattr(next_state_obj, "can_enter_from") and not next_state_obj.can_enter_from(
+                    self.current_state, flag
+                ):
+                    reason = getattr(next_state_obj, "last_block_reason", "transition guard rejected")
+                    print(f"FSM transition blocked: {self.current_state.name} -> {next_state.name}: {reason}")
+                    self.state_objects[self.current_state].run(flag)
+                    return
+
                 print(f"FSM transition: {self.current_state.name} -> {next_state.name}")
 
                 # 退出当前状态
                 current_state_obj.on_exit()
 
                 # 切换到新状态
+                if hasattr(next_state_obj, "prepare_transition"):
+                    next_state_obj.prepare_transition(self.current_state, flag)
                 self.current_state = next_state
                 self.state_objects[self.current_state].on_enter()
             else:

@@ -1,21 +1,10 @@
-model_path: "policy.onnx" 
+model_path: "policy_copy_283.onnx"  #policy_base.onnx
+# model_path: "policy_base.onnx"
 motor_num: 29        # 电机数量
 actions_size: 23     # action的大小
 dt: 0.01
 warm_start_time: 0.0
 xsense_data_roll_offset: 0.0
-joint_names: [
-  hip_pitch_l_joint, hip_pitch_r_joint, waist_yaw_joint,
-  hip_roll_l_joint, hip_roll_r_joint, waist_roll_joint,
-  hip_yaw_l_joint, hip_yaw_r_joint, waist_pitch_joint,
-  knee_pitch_l_joint, knee_pitch_r_joint,
-  shoulder_pitch_l_joint, shoulder_pitch_r_joint,
-  ankle_pitch_l_joint, ankle_pitch_r_joint,
-  shoulder_roll_l_joint, shoulder_roll_r_joint,
-  ankle_roll_l_joint, ankle_roll_r_joint,
-  shoulder_yaw_l_joint, shoulder_yaw_r_joint,
-  elbow_pitch_l_joint, elbow_pitch_r_joint
-]
 zero_pos_offset: [
       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
@@ -32,7 +21,7 @@ ct_scale: [
     ]
 control:
   # gait_cycle_period: 0.9
-  action_scale: 0.25               # 动作缩放比例，可写标量或 23 维数组
+  # action_scale: 0.25               # 动作缩放比例
   decimation: 1                   # 策略下发频率控制
 
 normalization:
@@ -47,45 +36,30 @@ normalization:
 
 size:
   num_hist: 10                     # 历史观测帧数
-  observations_size: 84          # 单帧观测长度
+  observations_size: 78          # 单帧观测长度
 
-gains:
-  kp: [
-    300.0, 300.0, 400.0,
-    300.0, 300.0, 400.0,
-    150.0, 150.0, 400.0,
-    350.0, 350.0,
-    150.0, 150.0,
-    30.0, 30.0,
-    50.0, 50.0,
-    16.8, 16.8,
-    50.0, 50.0,
-    150.0, 150.0
-  ]
-  kd: [
-    10.0, 10.0, 5.0,
-    10.0, 10.0, 10.0,
-    5.0, 5.0, 10.0,
-    10.0, 10.0,
-    7.5, 7.5,
-    2.5, 2.5,
-    2.5, 2.5,
-    1.4, 1.4,
-    2.5, 2.5,
-    5.0, 5.0
-  ]
+# gains:
+#   kp: [
+#     300.0, 300.0, 150.0, 350.0, 30.0, 16.8,
+#     300.0, 300.0, 150.0, 350.0, 30.0, 16.8,
+#     400.0, 400.0, 400.0,
+#     150.0, 50.0, 50.0, 150.0, 10, 10, 10,
+#     150.0, 50.0, 50.0, 150.0, 10, 10, 10
+#   ]
+#   kd: [
+#     10.0, 10.0, 5.0, 10.0, 2.5, 0.5,
+#     10.0, 10.0, 5.0, 10.0, 2.5, 0.5,
+#     10.0, 10.0,5.0,
+#     5.0, 2.5, 2.5, 5, 1.0, 1.0, 1.0,
+#     5.0, 2.5, 2.5, 5, 1.0, 1.0, 1.0
+#   ]
 
 
-init_state:
-  default_joint_angles: [
-    -0.15, -0.15, 0.0,
-    0.0, 0.0, 0.0,
-    -0.0, -0.0, 0.0,
-    0.3, 0.3,
-    0.2, 0.2,
-    -0.15, -0.15,
-    0.1, -0.1,
-    0.0, 0.0,
-    0.0, 0.0,
-    -0.5, -0.5
-  ]
+# init_state:
+#   default_joint_angles: [
+#     -0.2, 0.0, -0.0, 0.42, -0.23, 0.0,   # 左腿
+#     -0.2, 0.0, -0.0, 0.42, -0.23, 0.0,   # 右腿
+#     0.0, 0.0, 0.0,                   # 腰
+#     0.35, 0.18, 0.0, -0.87, # 左臂
+#     0.35, -0.18, 0.0, -0.87, # 右臂
+#   ]
