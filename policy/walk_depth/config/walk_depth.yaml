@@ -2,7 +2,7 @@
 # 移植自 bitbot_gz checkpoint/dex/encoder_actor_critic.onnx + robot_dex.yaml policy_walking
 # model_path: "dex_test3_1_c.onnx"
 # model_path: "50hz_200p_slow_stair_v2.onnx"
-model_path: "50hz_200p_x3_v1.onnx"
+model_path: "50hz_200p_x3_v2.onnx"
 # model_path: "dex_dr_1_partial_c.onnx"
 # model_path: "policy.onnx"
 motor_num: 29        # 电机数量
@@ -46,7 +46,7 @@ size:
 depth:
   num_images: 8                  # 深度历史帧数
   image_skip: 10                 # 历史帧间隔(策略tick数), 10*0.02s = 0.2s
-  debug_vis: false                # 弹窗显示送入策略的 32x18 处理帧
+  debug_vis:  false                # 弹窗显示送入策略的 32x18 处理帧
   # 相机分辨率/裁剪/模糊/归一化参数见 config/dex_config.yaml 的 robot_interface.depth
 
 gains:

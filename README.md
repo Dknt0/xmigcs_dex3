@@ -50,10 +50,15 @@ sudo dpkg -i lib/24/ros-jazzy-bodyctrl-msgs_0.0.0-0noble_amd64.deb
 
 ```bash
 # body节点, 只有真机才需要，仿真启动xsim_mujoco就行
+<!-- sudo su -->
+<!-- source /home/ubuntu/ros2ws/install/setup.bash -->
+<!-- source /opt/ros/humble/setup.sh -->
+<!-- ros2 launch body_control body.launch.py -->
+
 sudo su
-source /home/ubuntu/ros2ws/install/setup.bash
-source /opt/ros/humble/setup.sh
-ros2 launch body_control body.launch.py
+source /home/ubuntu/xos/setup.bash
+chrt -r 99 taskset -c 6-9 ros2 launch body_control body_control.launch.py
+
 
 # XBOX手柄节点
 export ROS_DOMAIN_ID=YOUR_DOMAIN_ID
