@@ -61,12 +61,12 @@ robot_interface:
   clip_actions: false
   waist_control_status: ["ZERO", "STOP", "BEYONDMIMIC", "BEYONDZERO", "WALKAMP",
                          "WALKLION", "WALKLIONDWAQ", "LIONZERO", "POLICYZERO",
-                         "WALKDEPTH", "STAND", "WALKDEPTH100HZ"
+                         "WALKDEPTH", "STAND", "WALKDEPTH100HZ", "MULTIAMP"
                         ] #
   legs_control_status: [] #空代表都允许控制，仅腿部是这个逻辑
   arms_control_status: ["ZERO", "STOP",  "BEYONDMIMIC", "BEYONDZERO", "WALKAMP",
                         "WALKLION", "WALKLIONDWAQ", "LIONZERO", "POLICYZERO",
-                         "WALKDEPTH", "STAND", "WALKDEPTH100HZ"
+                         "WALKDEPTH", "STAND", "WALKDEPTH100HZ", "MULTIAMP"
                        ] #
   left_arm_only_status: []
   right_arm_only_status: []

@@ -177,6 +177,7 @@ class RobotInterfaceImpl(RobotInterface):
             FSMStateName.WALKLIONDWAQ,
             FSMStateName.WALKDEPTH,
             FSMStateName.WALKDEPTH100HZ,
+            FSMStateName.MULTIAMP,
         }
 
     def update_param(self, current_state: FSMStateName = None):
@@ -267,6 +268,7 @@ class RobotInterfaceImpl(RobotInterface):
             "WALKDEPTH": FSMStateName.WALKDEPTH,
             "STAND": FSMStateName.STAND,
             "WALKDEPTH100HZ": FSMStateName.WALKDEPTH100HZ,
+            "MULTIAMP": FSMStateName.MULTIAMP,
         }
         self.waist_control_status = [state_to_FSMState[state] for state in config.get('waist_control_status')]
         self.legs_control_status = [state_to_FSMState[state] for state in config.get('legs_control_status')]

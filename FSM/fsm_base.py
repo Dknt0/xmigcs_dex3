@@ -23,6 +23,7 @@ class FSMStateName(Enum):
     WALKDEPTH = 9 # 深度感知行走策略状态
     STAND = 10     # 站立/迈步策略状态
     WALKDEPTH100HZ = 11 # 深度感知行走策略状态
+    MULTIAMP = 12 # Dex29 student: stand/walk <-> prone
 
 class FSMState(ABC):
     """FSM状态抽象基类"""

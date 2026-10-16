@@ -2,6 +2,7 @@
 FSM Implementation
 Complete FSM implementation with state management
 """
+
 from typing import Dict
 from .fsm_base import RobotFSM, FSMStateName
 from policy.walk_amp.fsm_walkamp import FSMStateWALKAMP
@@ -16,15 +17,18 @@ from policy.policyzero.fsm_policyzero import FSMStatePolicyZero
 from policy.walk_depth.fsm_walkdepth import FSMStateWALKDEPTH
 from policy.stand.fsm_stand import FSMStateSTAND
 from policy.walk_depth_100hz.fsm_walkdepth_100hz import FSMStateWALKDEPTH100HZ
+from policy.multi_amp.fsm_multiamp import FSMStateMULTIAMP
 from common.robot_data import RobotData
 from common.joystick import ControlFlag
 import functools
 import time
 
+
 def timing_decorator(func):
     """
     装饰器：记录函数执行时间
     """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.perf_counter()
@@ -33,7 +37,9 @@ def timing_decorator(func):
         execution_time = end_time - start_time
         print(f"[TIMING] {func.__name__} executed in {execution_time:.6f} seconds")
         return result
+
     return wrapper
+
 
 class RobotFSMImpl(RobotFSM):
     """机器人FSM具体实现"""
@@ -45,6 +51,7 @@ class RobotFSMImpl(RobotFSM):
         # 当前状态
         self.current_state = FSMStateName.STOP
         self.state_objects = {}
+        self._last_fsm_event = None
 
         # 初始化所有状态对象
         self._init_states()
@@ -65,7 +72,10 @@ class RobotFSMImpl(RobotFSM):
         # self.state_objects[FSMStateName.POLICYZERO] = FSMStatePolicyZero(self.robot_data_)
         self.state_objects[FSMStateName.WALKDEPTH] = FSMStateWALKDEPTH(self.robot_data_)
         # self.state_objects[FSMStateName.STAND] = FSMStateSTAND(self.robot_data_)
-        self.state_objects[FSMStateName.WALKDEPTH100HZ] = FSMStateWALKDEPTH100HZ(self.robot_data_)
+        self.state_objects[FSMStateName.WALKDEPTH100HZ] = FSMStateWALKDEPTH100HZ(
+            self.robot_data_
+        )
+        self.state_objects[FSMStateName.MULTIAMP] = FSMStateMULTIAMP(self.robot_data_)
         # TODO: 添加其他状态对象
 
     # @timing_decorator
@@ -75,15 +85,28 @@ class RobotFSMImpl(RobotFSM):
         current_state_obj = self.state_objects[self.current_state]
         next_state = current_state_obj.check_transition(flag)
 
+        event = (flag.fsm_state_command, getattr(flag, "fsm_event_id", 0))
+        fresh_event = event != self._last_fsm_event
+        self._last_fsm_event = event
+        # Reselection is an event, not an exit/re-entry: preserve policy history.
+        if fresh_event and next_state == self.current_state:
+            handler = getattr(current_state_obj, "on_reselect", None)
+            if handler is not None:
+                handler(flag)
+
         # 如果需要状态转换
         if next_state is not None and next_state != self.current_state:
             if next_state in self.state_objects:
                 next_state_obj = self.state_objects[next_state]
-                if hasattr(next_state_obj, "can_enter_from") and not next_state_obj.can_enter_from(
-                    self.current_state, flag
-                ):
-                    reason = getattr(next_state_obj, "last_block_reason", "transition guard rejected")
-                    print(f"FSM transition blocked: {self.current_state.name} -> {next_state.name}: {reason}")
+                if hasattr(
+                    next_state_obj, "can_enter_from"
+                ) and not next_state_obj.can_enter_from(self.current_state, flag):
+                    reason = getattr(
+                        next_state_obj, "last_block_reason", "transition guard rejected"
+                    )
+                    print(
+                        f"FSM transition blocked: {self.current_state.name} -> {next_state.name}: {reason}"
+                    )
                     self.state_objects[self.current_state].run(flag)
                     return
 

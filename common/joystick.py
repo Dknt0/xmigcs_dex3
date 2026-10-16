@@ -2,6 +2,7 @@
 Joystick Control Module
 Python equivalent of the C++ Joystick functionality for ROS Joy messages
 """
+
 import os
 import yaml
 import threading
@@ -14,6 +15,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Joy
 import numpy as np
 
+
 @dataclass
 class ControlFlag:
     """Controller command consumed by RobotInterface and FSM states.
@@ -21,6 +23,7 @@ class ControlFlag:
     All controller adapters expose the same walk-command fields.  RobotInterface
     decides whether the current FSM state is allowed to consume them.
     """
+
     fsm_state_command: str = "gotoZERO"
     # fsm_state_command: str = "gotoLIONZERO"
     # 禁用、启用手柄控制标志
@@ -28,18 +31,22 @@ class ControlFlag:
     x_speed_command: float = 0.0
     y_speed_command: float = 0.0
     yaw_speed_command: float = 0.0
+    # Increment for each discrete FSM event; held commands keep the same ID.
+    fsm_event_id: int = 0
+
 
 @dataclass
 class YUNZHUOMap:
     """云卓T12手柄按键映射 (对应ROS Joy消息)"""
-    a: float = 0.0   # axes[8] #a,b,c,d手柄轴初始值为-1
-    b: float = 0.0   # axes[9]
-    c: float = 0.0   # axes[10]
-    d: float = 0.0   # axes[11]
-    e: float = 0.0   # axes[4]  e,f,g,h手柄轴初始值为0.0
-    f: float = 0.0   # axes[7]
-    g: float = 0.0   # axes[5]
-    h: float = 0.0   # axes[6]
+
+    a: float = 0.0  # axes[8] #a,b,c,d手柄轴初始值为-1
+    b: float = 0.0  # axes[9]
+    c: float = 0.0  # axes[10]
+    d: float = 0.0  # axes[11]
+    e: float = 0.0  # axes[4]  e,f,g,h手柄轴初始值为0.0
+    f: float = 0.0  # axes[7]
+    g: float = 0.0  # axes[5]
+    h: float = 0.0  # axes[6]
     x1: float = 0.0  # axes[3]
     x2: float = 0.0  # axes[0]
     y1: float = 0.0  # axes[2]
@@ -102,9 +109,9 @@ class JoystickHumanoid:
 
     def _load_config(self):
         """加载YAML配置文件"""
-        config_path = os.path.join('.', "config", "dex_config.yaml")
+        config_path = os.path.join(".", "config", "dex_config.yaml")
 
-        with open(config_path, 'r') as file:
+        with open(config_path, "r") as file:
             config = yaml.safe_load(file)
 
         if not config:
@@ -126,23 +133,24 @@ class JoystickHumanoid:
         self.max_height = joystick_cfg.get("max_height")
         self.min_height = joystick_cfg.get("min_height")
 
-        print(f"Loaded initial_height: {self.initial_height}, "
-                f"x_command_offset: {self.x_command_offset}, "
-                f"y_command_offset: {self.y_command_offset}, "
-                f"yaw_command_offset: {self.yaw_command_offset},"
-                f"max_x_plus_speed: {self.max_x_plus_speed}, "
-                f"max_x_minus_speed: {self.max_x_minus_speed}, "
-                f"max_y_speed: {self.max_y_speed}, "
-                f"max_yaw_speed: {self.max_yaw_speed}, "
-                f"command_timeout_s: {self.command_timeout_s}, "
-                f"max_height: {self.max_height},"
-                f"min_height: {self.min_height}")
+        print(
+            f"Loaded initial_height: {self.initial_height}, "
+            f"x_command_offset: {self.x_command_offset}, "
+            f"y_command_offset: {self.y_command_offset}, "
+            f"yaw_command_offset: {self.yaw_command_offset},"
+            f"max_x_plus_speed: {self.max_x_plus_speed}, "
+            f"max_x_minus_speed: {self.max_x_minus_speed}, "
+            f"max_y_speed: {self.max_y_speed}, "
+            f"max_yaw_speed: {self.max_yaw_speed}, "
+            f"command_timeout_s: {self.command_timeout_s}, "
+            f"max_height: {self.max_height},"
+            f"min_height: {self.min_height}"
+        )
 
         self.current_height = self.initial_height
         self.target_height = self.initial_height
         self.joy_flag.waist_height_command = self.current_height
         self.joy_flag.walk_height_command = self.current_height
-
 
     def joy_map_read(self, msg: Joy):
         """处理ROS Joy消息，更新手柄映射"""
@@ -160,7 +168,8 @@ class JoystickHumanoid:
                     x1=msg.axes[3] if len(msg.axes) > 3 else 0.0,
                     x2=msg.axes[0] if len(msg.axes) > 1 else 0.0,
                     y1=msg.axes[2] if len(msg.axes) > 2 else 0.0,
-                    y2=msg.axes[1] if len(msg.axes) > 0 else 0.0)
+                    y2=msg.axes[1] if len(msg.axes) > 0 else 0.0,
+                )
                 self.joy_map = yunzhuo_map
                 self.last_msg_time = time.monotonic()
 
@@ -180,8 +189,7 @@ class JoystickHumanoid:
             if self.joy_map.c == 1.0:
                 self.joy_flag.fsm_state_command = "gotoSTOP"
             else:
-                button_pressed_nums = self.check_button_pressed_nums(
-                    self.joy_map)
+                button_pressed_nums = self.check_button_pressed_nums(self.joy_map)
                 if self._policyzero_chord_pressed():
                     # Isolated g+h enters the one-trigger policy bridge.  Do
                     # not accept g+h mixed with a/b/d/e/f, because those chords
@@ -217,8 +225,6 @@ class JoystickHumanoid:
                             self.joy_flag.fsm_state_command = "gotoWALKLION"
                         elif self.joy_map.b == 1.0:
                             self.joy_flag.fsm_state_command = "gotoWALKLIONDWAQ"
-
-
 
     def get_joy_flag(self) -> ControlFlag:
         """Return a snapshot of the current flag, zeroing stale input first."""
@@ -275,8 +281,9 @@ class JoystickHumanoid:
     def get_x_y_yaw_speed_command(self):
         """获取当前速度命令"""
         # 速度命令计算
-        self.joy_flag.y_speed_command = (self.joy_map.x1 * -self.max_y_speed +
-                                         self.y_command_offset)
+        self.joy_flag.y_speed_command = (
+            self.joy_map.x1 * -self.max_y_speed + self.y_command_offset
+        )
 
         # X速度 (前进/后退)
         if self.joy_map.y1 >= 0:
@@ -284,11 +291,14 @@ class JoystickHumanoid:
                 self.joy_map.y1 * self.max_x_plus_speed + self.x_command_offset
             )  # 前进快一点
         else:
-            self.joy_flag.x_speed_command = self.joy_map.y1 * self.max_x_minus_speed  # 后退慢一点
+            self.joy_flag.x_speed_command = (
+                self.joy_map.y1 * self.max_x_minus_speed
+            )  # 后退慢一点
 
         # 偏航速度
         self.joy_flag.yaw_speed_command = (
-            self.joy_map.x2 * -self.max_yaw_speed + self.yaw_command_offset)
+            self.joy_map.x2 * -self.max_yaw_speed + self.yaw_command_offset
+        )
 
     def get_walk_height_command(self):
         """获取当前高度命令"""
@@ -298,14 +308,18 @@ class JoystickHumanoid:
         if self.joy_map.x2 >= deadzone_height:
             # x2 下拨
             self.joy_flag.walk_height_command += -self.joy_map.x2 * (
-                self.joy_flag.walk_height_command - self.min_height)
+                self.joy_flag.walk_height_command - self.min_height
+            )
         if self.joy_map.x2 <= -deadzone_height:
             # x2 上拨
             self.joy_flag.walk_height_command += -self.joy_map.x2 * (
-                self.max_height - self.joy_flag.walk_height_command)
+                self.max_height - self.joy_flag.walk_height_command
+            )
 
         # 1s中高度变化3cm, step= 0.03 / 100 hz = 0.0003
         step = 0.03 / 100
         self.joy_flag.walk_height_command = np.clip(
-            self.joy_flag.walk_height_command, current_height_command - step,
-            current_height_command + step)
+            self.joy_flag.walk_height_command,
+            current_height_command - step,
+            current_height_command + step,
+        )

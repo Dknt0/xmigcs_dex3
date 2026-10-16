@@ -75,6 +75,8 @@ class FSMStateZero(FSMState):
             return FSMStateName.STOP
         elif flag.fsm_state_command == "gotoWALKAMP":
             return FSMStateName.WALKAMP
+        elif flag.fsm_state_command == "gotoMULTIAMP":
+            return FSMStateName.MULTIAMP
         elif flag.fsm_state_command == "gotoZERO":
             return FSMStateName.ZERO
         elif flag.fsm_state_command == "gotoBEYONDZERO":

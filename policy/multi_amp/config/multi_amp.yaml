@@ -1,0 +1,87 @@
+# MULTIAMP：29关节，50Hz，64帧历史；通过model_path选择兼容模型。
+# 下列模型共用关节顺序、动作缩放和PD；速度指令语义随训练版本变化，详见Codex导出记录。
+# model_path: "transformer_v11_53300.onnx"
+# model_path: "composed_mlp8500.onnx"  # 原专家组合MLP，8500轮
+model_path: "composed_mlp_v13_11700.onnx"  # V13转向/起身奖励续训，11700轮
+# model_path: "composed_mlp_v13_27200.onnx"  # V13，27200轮
+# model_path: "restore45000.onnx"
+# model_path: "student35001.onnx"
+# model_path: "transformer48000.onnx"
+# model_path: "mlp18500.onnx"
+motor_num: 29
+actions_size: 29
+dt: 0.01                            # 主循环 100Hz
+
+# 策略观测/动作顺序；action_scale 和 default_joint_angles 按此顺序。
+joint_names: [
+  hip_pitch_l_joint, hip_roll_l_joint, hip_yaw_l_joint, knee_pitch_l_joint, ankle_pitch_l_joint, ankle_roll_l_joint,
+  hip_pitch_r_joint, hip_roll_r_joint, hip_yaw_r_joint, knee_pitch_r_joint, ankle_pitch_r_joint, ankle_roll_r_joint,
+  waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
+  shoulder_pitch_l_joint, shoulder_roll_l_joint, shoulder_yaw_l_joint, elbow_pitch_l_joint, elbow_yaw_l_joint, wrist_pitch_l_joint, wrist_roll_l_joint,
+  shoulder_pitch_r_joint, shoulder_roll_r_joint, shoulder_yaw_r_joint, elbow_pitch_r_joint, elbow_yaw_r_joint, wrist_pitch_r_joint, wrist_roll_r_joint
+]
+
+control:
+  warm_start_time: 0.3              # 秒；仅入态，从当前串联关节位置渐变至策略目标；0关闭
+  decimation: 2                     # 100Hz / 2 = 50Hz
+  action_scale: [
+    0.19583334028720856, 0.19583334028720856, 0.25, 0.3030303120613098, 0.4583333432674408, 0.8184523582458496,
+    0.19583334028720856, 0.19583334028720856, 0.25, 0.3030303120613098, 0.4583333432674408, 0.8184523582458496,
+    0.05687500163912773, 0.09375, 0.09375,
+    0.22499999403953552, 0.44999998807907104, 0.25, 0.125, 0.09000000357627869, 0.18000000715255737, 0.18000000715255737,
+    0.22499999403953552, 0.44999998807907104, 0.25, 0.125, 0.09000000357627869, 0.18000000715255737, 0.18000000715255737
+  ]
+
+normalization:
+  embedded: true                    # ONNX 内完成归一化，部署端输入原始观测
+  epsilon: 0.01                     # 已嵌入 ONNX 的归一化参数
+  clip_scales:
+    clip_observations: 20.0          # ONNX 内归一化后的限幅，不裁剪原始观测
+    clip_actions: 18.0               # ONNX 内裁剪后的动作输出上限
+
+size:
+  num_hist: 64                       # 从旧到新；首次用当前帧填满，切换模态保留历史
+  observations_size: 98             # gyro3 + gravity3 + cmd3 + q29 + dq29 + action29 + mode2
+
+# PD 与力矩参考按电机串联顺序：左腿6、右腿6、腰3、左臂7、右臂7。
+gains:
+  kp: [
+    300.0, 300.0, 150.0, 330.0, 30.0, 16.8,
+    300.0, 300.0, 150.0, 330.0, 30.0, 16.8,
+    200.0, 200.0, 200.0,
+    100.0, 50.0, 50.0, 100.0, 50.0, 20.0, 20.0,
+    100.0, 50.0, 50.0, 100.0, 50.0, 20.0, 20.0
+  ]
+  kd: [
+    10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+    10.0, 10.0, 5.0, 10.0, 2.5, 1.4,
+    5.0, 10.0, 10.0,
+    5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0,
+    5.0, 2.5, 2.5, 5.0, 5.0, 2.0, 2.0
+  ]
+  # 训练力矩上限仅作参数参考；CmdMotorCtrl 无对应限幅字段。
+  torque_limits: [
+    235.0, 235.0, 150.0, 400.0, 55.0, 55.0,
+    235.0, 235.0, 150.0, 400.0, 55.0, 55.0,
+    91.0, 150.0, 150.0,
+    90.0, 90.0, 50.0, 50.0, 36.0, 36.0, 36.0,
+    90.0, 90.0, 50.0, 50.0, 36.0, 36.0, 36.0
+  ]
+
+init_state:
+  # 训练动作偏置：q_target = default_joint_angles + action_scale * action。
+  # 不是入态复位姿态；首次推理用当前反馈，目标按warm_start_time从入态反馈渐变。
+  default_joint_angles: [
+    -0.3008909821510315, 0.49764561653137207, 0.3357492685317993, 0.7786766290664673, -0.6044358611106873, -0.24348974227905273,
+    -0.36869993805885315, -0.4215787649154663, -0.038514334708452225, 0.6751997470855713, -0.6175207495689392, 0.28636327385902405,
+    -0.03797583654522896, 0.07327364385128021, -0.062186893075704575,
+    -0.9005642533302307, 1.0862717628479004, 0.07112835347652435, -2.4127752780914307, -0.642667829990387, 0.2420901507139206, 0.18287985026836395,
+    -1.370736002922058, -0.6602389812469482, 0.24346952140331268, -2.25589919090271, 0.744383692741394, 0.29120931029319763, 0.10428112745285034
+  ]
+
+mode:
+  initial_mode: walk
+  switch_cooldown: 0.5               # 秒；进入状态和成功切换时开始计时
+  codes:
+    walk: [0, 1]
+    prone: [1, 0]

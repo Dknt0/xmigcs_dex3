@@ -37,6 +37,7 @@ backend.json (p=init_pose, 1/2/3=policies, space=stop, i/k/j/l/u/o=nudges).
 
 Enable with `control_tool: websocket` in config/dex_config.yaml.
 """
+
 import asyncio
 import json
 import math
@@ -45,6 +46,7 @@ import queue
 import struct
 import threading
 import time
+import copy
 
 import yaml
 from aiohttp import WSMsgType, web
@@ -54,33 +56,35 @@ from .joystick import ControlFlag
 
 # button event -> FSM state command
 EVENT_TO_FSM = {
-    'stop': 'gotoSTOP',
-    'start': 'gotoZERO',
-    'init_pose': 'gotoZERO',
-    'run_policy': 'gotoWALKAMP',
-    'enable_warking_policy': 'gotoWALKDEPTH',
-    'enable_standing_policy': 'gotoWALKAMP',
-    'enable_robust_policy': 'gotoWALKDEPTH100HZ',
+    "stop": "gotoSTOP",
+    "start": "gotoZERO",
+    "init_pose": "gotoZERO",
+    "run_policy": "gotoWALKAMP",
+    "enable_warking_policy": "gotoWALKDEPTH",
+    "enable_standing_policy": "gotoWALKAMP",
+    # "enable_robust_policy": "gotoWALKDEPTH100HZ",
+    "enable_robust_policy": "gotoMULTIAMP",  # dex 盲走 AMP v2 (kb $)
 }
 
 # velocity nudge events (keyboard-style clients): name -> (axis, delta)
 # axis 0/1/2 = x/y/yaw; step configurable via `websocket.velocity_step`
 NUDGE_EVENTS = {
-    'velo_x_increase': (0, +1),
-    'velo_x_decrease': (0, -1),
-    'velo_y_increase': (1, +1),
-    'velo_y_decrease': (1, -1),
-    'velo_w_increase': (2, +1),
-    'velo_w_decrease': (2, -1),
+    "velo_x_increase": (0, +1),
+    "velo_x_decrease": (0, -1),
+    "velo_y_increase": (1, +1),
+    "velo_y_decrease": (1, -1),
+    "velo_w_increase": (2, +1),
+    "velo_w_decrease": (2, -1),
 }
 
 # FSM state command -> numeric state id published in the kernel block
 COMMAND_TO_STATE_ID = {
-    'gotoSTOP': 1,
-    'gotoZERO': 2,
-    'gotoWALKAMP': 3,
-    'gotoWALKDEPTH': 4,
-    'gotoWALKDEPTH100HZ': 5,
+    "gotoSTOP": 1,
+    "gotoZERO": 2,
+    "gotoWALKAMP": 3,
+    "gotoWALKDEPTH": 4,
+    "gotoWALKDEPTH100HZ": 5,
+    "gotoMULTIAMP": 5,
 }
 
 # served at /setting/control/get — identical to bitbot-ovinf backend.json
@@ -106,13 +110,29 @@ CONTROL_SETTINGS = [
     {"event": "set_vel_w", "kb_key": "#"},
 ]
 
-JOINT_HEADERS = ["mode", "actual_position", "target_position",
-                 "actual_velocity", "actual_torque", "p_tain", "d_gain",
-                 "temperature"]
-IMU_HEADERS = ["roll", "pitch", "yaw",
-               "gyro_x", "gyro_y", "gyro_z",
-               "acc_x", "acc_y", "acc_z"]
+JOINT_HEADERS = [
+    "mode",
+    "actual_position",
+    "target_position",
+    "actual_velocity",
+    "actual_torque",
+    "p_tain",
+    "d_gain",
+    "temperature",
+]
+IMU_HEADERS = [
+    "roll",
+    "pitch",
+    "yaw",
+    "gyro_x",
+    "gyro_y",
+    "gyro_z",
+    "acc_x",
+    "acc_y",
+    "acc_z",
+]
 CMD_HEADERS = ["x_speed", "y_speed", "yaw_speed"]
+
 
 # joint group (by index) -> device type; the app makes one tab per type
 def _joint_type(index: int) -> str:
@@ -136,11 +156,11 @@ class WebsocketFlag(ControlFlag):
 
 def _double_to_bits(value: float) -> int:
     """IEEE-754 double bit pattern as a signed int64 (the wire 'value')."""
-    return struct.unpack('<q', struct.pack('<d', float(value)))[0]
+    return struct.unpack("<q", struct.pack("<d", float(value)))[0]
 
 
 def _bits_to_double(value: int) -> float:
-    return struct.unpack('<d', struct.pack('<q', int(value)))[0]
+    return struct.unpack("<d", struct.pack("<q", int(value)))[0]
 
 
 class WebsocketController:
@@ -165,7 +185,7 @@ class WebsocketController:
         # monitor snapshot, written by the control thread, read by ws threads
         self._snapshot = []
         self._snapshot_mutex = threading.Lock()
-        self._monitor_str = '{"data":[]}'   # cached inner JSON string
+        self._monitor_str = '{"data":[]}'  # cached inner JSON string
         self._snapshot_dirty = False
 
         # loop statistics for the kernel block
@@ -198,12 +218,18 @@ class WebsocketController:
 
         self._headers_json = self._build_headers_json()
         self._states_json = json.dumps(
-            {"states": [{"id": 0, "name": "kernel_idle"},
-                        {"id": 1, "name": "fsm_stop"},
-                        {"id": 2, "name": "fsm_zero"},
-                        {"id": 3, "name": "fsm_walkamp"},
-                        {"id": 4, "name": "fsm_walkdepth"},
-                        {"id": 5, "name": "fsm_stand"}]})
+            {
+                "states": [
+                    {"id": 0, "name": "kernel_idle"},
+                    {"id": 1, "name": "fsm_stop"},
+                    {"id": 2, "name": "fsm_zero"},
+                    {"id": 3, "name": "fsm_walkamp"},
+                    {"id": 4, "name": "fsm_walkdepth"},
+                    {"id": 5, "name": "fsm_stand"},
+                    {"id": 6, "name": "fsm_multiamp"},
+                ]
+            }
+        )
 
         # server thread plumbing
         self._loop = None
@@ -215,20 +241,26 @@ class WebsocketController:
 
     def _load_config(self):
         try:
-            config_path = os.path.join('.', 'config', 'dex_config.yaml')
-            with open(config_path, 'r') as f:
+            config_path = os.path.join(".", "config", "dex_config.yaml")
+            with open(config_path, "r") as f:
                 cfg = yaml.safe_load(f) or {}
-            ws_cfg = cfg.get('websocket', {}) or {}
-            self.host = ws_cfg.get('host', self.host)
-            self.port = int(ws_cfg.get('port', self.port))
-            self.max_x_plus_speed = float(ws_cfg.get('max_x_plus_speed', self.max_x_plus_speed))
-            self.max_x_minus_speed = float(ws_cfg.get('max_x_minus_speed', self.max_x_minus_speed))
-            self.max_y_speed = float(ws_cfg.get('max_y_speed', self.max_y_speed))
-            self.max_yaw_speed = float(ws_cfg.get('max_yaw_speed', self.max_yaw_speed))
-            self.echo_interval = float(ws_cfg.get('echo_interval', self.echo_interval))
-            self.velocity_step = float(ws_cfg.get('velocity_step', self.velocity_step))
-            self.initial_height = float(ws_cfg.get('initial_height', self.initial_height))
-            self.height_step = float(ws_cfg.get('height_step', self.height_step))
+            ws_cfg = cfg.get("websocket", {}) or {}
+            self.host = ws_cfg.get("host", self.host)
+            self.port = int(ws_cfg.get("port", self.port))
+            self.max_x_plus_speed = float(
+                ws_cfg.get("max_x_plus_speed", self.max_x_plus_speed)
+            )
+            self.max_x_minus_speed = float(
+                ws_cfg.get("max_x_minus_speed", self.max_x_minus_speed)
+            )
+            self.max_y_speed = float(ws_cfg.get("max_y_speed", self.max_y_speed))
+            self.max_yaw_speed = float(ws_cfg.get("max_yaw_speed", self.max_yaw_speed))
+            self.echo_interval = float(ws_cfg.get("echo_interval", self.echo_interval))
+            self.velocity_step = float(ws_cfg.get("velocity_step", self.velocity_step))
+            self.initial_height = float(
+                ws_cfg.get("initial_height", self.initial_height)
+            )
+            self.height_step = float(ws_cfg.get("height_step", self.height_step))
             print(f"Loaded websocket config: {self.host}:{self.port}")
         except Exception as e:
             print(f"[WebsocketController] YAML load error: {e}")
@@ -237,25 +269,39 @@ class WebsocketController:
         devices = []
         for i in range(self.id_map.whole_motor_nums):
             name = self.id_map.get_name_by_index(i)
-            devices.append({"name": name, "type": _joint_type(i),
-                            "headers": list(JOINT_HEADERS)})
+            devices.append(
+                {"name": name, "type": _joint_type(i), "headers": list(JOINT_HEADERS)}
+            )
         devices.append({"name": "imu", "type": "IMU", "headers": list(IMU_HEADERS)})
-        devices.append({"name": "walk_cmd", "type": "Command", "headers": list(CMD_HEADERS)})
-        return json.dumps({
-            "kernel": ["state", "periods_count", "period(ms)",
-                       "process_t(ms)", "kernel_t(ms)"],
-            "bus": {"devices": devices},
-            "extra": []})
+        devices.append(
+            {"name": "walk_cmd", "type": "Command", "headers": list(CMD_HEADERS)}
+        )
+        return json.dumps(
+            {
+                "kernel": [
+                    "state",
+                    "periods_count",
+                    "period(ms)",
+                    "process_t(ms)",
+                    "kernel_t(ms)",
+                ],
+                "bus": {"devices": devices},
+                "extra": [],
+            }
+        )
 
     # ------------------------------------------------------- controller iface
 
     def init(self) -> int:
         self._running = True
-        self._server_thread = threading.Thread(target=self._server_main,
-                                               daemon=True, name='ws-console')
+        self._server_thread = threading.Thread(
+            target=self._server_main, daemon=True, name="ws-console"
+        )
         self._server_thread.start()
-        print(f"Websocket console: http://{self.host}:{self.port}/ "
-              f"(ws://...:{self.port}/console)")
+        print(
+            f"Websocket console: http://{self.host}:{self.port}/ "
+            f"(ws://...:{self.port}/console)"
+        )
         return 0
 
     def update_flag(self):
@@ -279,7 +325,9 @@ class WebsocketController:
         with self.flag_mutex:
             step = 0.01
             if abs(self.current_height - self.target_height) > step:
-                self.current_height += step if self.current_height < self.target_height else -step
+                self.current_height += (
+                    step if self.current_height < self.target_height else -step
+                )
             else:
                 self.current_height = self.target_height
             self.flag.height_cmd = self.current_height
@@ -291,7 +339,7 @@ class WebsocketController:
 
     def get_ws_flag(self) -> ControlFlag:
         with self.flag_mutex:
-            return self.flag
+            return copy.deepcopy(self.flag)
 
     def stop(self):
         self._running = False
@@ -306,41 +354,63 @@ class WebsocketController:
         with self.flag_mutex:
             # a value=2 right after value=1 of the same key is the release
             # half of a desktop press/release pair -> apply only once
-            is_release = (value == 2 and self._last_button_value.get(name) == 1)
+            previous_value = self._last_button_value.get(name)
+            is_release = value == 2 and previous_value == 1
             self._last_button_value[name] = value
 
-            if name == 'set_vel_x':
+            if name == "set_vel_x":
                 self.flag.x_speed_command = self._clamp_axis(
-                    _bits_to_double(value), -self.max_x_minus_speed, self.max_x_plus_speed)
-            elif name == 'set_vel_y':
+                    _bits_to_double(value),
+                    -self.max_x_minus_speed,
+                    self.max_x_plus_speed,
+                )
+            elif name == "set_vel_y":
                 self.flag.y_speed_command = self._clamp_axis(
-                    _bits_to_double(value), -self.max_y_speed, self.max_y_speed)
-            elif name == 'set_vel_w':
+                    _bits_to_double(value), -self.max_y_speed, self.max_y_speed
+                )
+            elif name == "set_vel_w":
                 self.flag.yaw_speed_command = self._clamp_axis(
-                    _bits_to_double(value), -self.max_yaw_speed, self.max_yaw_speed)
+                    _bits_to_double(value), -self.max_yaw_speed, self.max_yaw_speed
+                )
             elif name in NUDGE_EVENTS and not is_release:
                 axis, sign = NUDGE_EVENTS[name]
                 delta = sign * self.velocity_step
                 if axis == 0:
                     self.flag.x_speed_command = self._clamp_axis(
                         self.flag.x_speed_command + delta,
-                        -self.max_x_minus_speed, self.max_x_plus_speed)
+                        -self.max_x_minus_speed,
+                        self.max_x_plus_speed,
+                    )
                 elif axis == 1:
                     self.flag.y_speed_command = self._clamp_axis(
                         self.flag.y_speed_command + delta,
-                        -self.max_y_speed, self.max_y_speed)
+                        -self.max_y_speed,
+                        self.max_y_speed,
+                    )
                 else:
                     self.flag.yaw_speed_command = self._clamp_axis(
                         self.flag.yaw_speed_command + delta,
-                        -self.max_yaw_speed, self.max_yaw_speed)
-            elif name == 'height_up':
+                        -self.max_yaw_speed,
+                        self.max_yaw_speed,
+                    )
+            elif name == "height_up":
                 self.target_height = min(self.target_height + self.height_step, 0.90)
-            elif name == 'height_down':
+            elif name == "height_down":
                 self.target_height = max(self.target_height - self.height_step, 0.65)
             elif name in EVENT_TO_FSM:
-                # trigger on press (1) or release (2); the command is
-                # level-based so reacting to both is idempotent
-                self.flag.fsm_state_command = EVENT_TO_FSM[name]
+                command = EVENT_TO_FSM[name]
+
+                if command == "gotoMULTIAMP":
+                    # 一次按下/松开只计一次，忽略长按产生的重复按下。
+                    # 同时支持只发送 value=2 的点击端。
+                    if value not in (1, 2):
+                        return False
+                    if is_release or (value == 1 and previous_value == 1):
+                        return False
+
+                self.flag.fsm_state_command = command
+                self.flag.fsm_event_id += 1
+                return True
             else:
                 print(f"[ws-console] ignored event '{name}'")
 
@@ -358,7 +428,8 @@ class WebsocketController:
                 # ids must match /monitor/stateslist; enum .value+1 only worked
                 # while the exposed states were the first enum members
                 return COMMAND_TO_STATE_ID.get(
-                    'goto' + self.fsm.get_current_state().name, 0)
+                    "goto" + self.fsm.get_current_state().name, 0
+                )
             except Exception:
                 return 0
         with self.flag_mutex:
@@ -368,19 +439,37 @@ class WebsocketController:
         rd = self.robot_data
         start = rd.whole_joint_num - rd.motor_num
         rad2deg = 180.0 / math.pi
-        row = [float(self._current_state_id()), float(self._periods),
-               float(self._loop_period_ms), float(self._process_ms),
-               float(self._process_ms)]
+        row = [
+            float(self._current_state_id()),
+            float(self._periods),
+            float(self._loop_period_ms),
+            float(self._process_ms),
+            float(self._process_ms),
+        ]
         for i in range(rd.motor_num):
             j = start + i
-            row += [1.0,
-                    float(rd.q_a_s_[j]) * rad2deg, float(rd.q_d_s_[j]) * rad2deg,
-                    float(rd.q_dot_a_s_[j]), float(rd.tau_a_s_[j]), float(rd.joint_kp_s_[i]),
-                    float(rd.joint_kd_s_[i]), float(rd.temperature_a[i])]
+            row += [
+                1.0,
+                float(rd.q_a_s_[j]) * rad2deg,
+                float(rd.q_d_s_[j]) * rad2deg,
+                float(rd.q_dot_a_s_[j]),
+                float(rd.tau_a_s_[j]),
+                float(rd.joint_kp_s_[i]),
+                float(rd.joint_kd_s_[i]),
+                float(rd.temperature_a[i]),
+            ]
         imu = rd.imu_data_
-        row += [float(imu[2]) * rad2deg, float(imu[1]) * rad2deg, float(imu[0]) * rad2deg,
-                float(imu[3]), float(imu[4]), float(imu[5]),
-                float(imu[6]), float(imu[7]), float(imu[8])]
+        row += [
+            float(imu[2]) * rad2deg,
+            float(imu[1]) * rad2deg,
+            float(imu[0]) * rad2deg,
+            float(imu[3]),
+            float(imu[4]),
+            float(imu[5]),
+            float(imu[6]),
+            float(imu[7]),
+            float(imu[8]),
+        ]
         row += [float(rd.walk_cmd_[0]), float(rd.walk_cmd_[1]), float(rd.walk_cmd_[2])]
 
         with self._snapshot_mutex:
@@ -398,9 +487,20 @@ class WebsocketController:
 
     def _echo_events_message(self) -> str:
         with self.flag_mutex:
-            events = [{"name": "set_vel_x", "value": _double_to_bits(self.flag.x_speed_command)},
-                      {"name": "set_vel_y", "value": _double_to_bits(self.flag.y_speed_command)},
-                      {"name": "set_vel_w", "value": _double_to_bits(self.flag.yaw_speed_command)}]
+            events = [
+                {
+                    "name": "set_vel_x",
+                    "value": _double_to_bits(self.flag.x_speed_command),
+                },
+                {
+                    "name": "set_vel_y",
+                    "value": _double_to_bits(self.flag.y_speed_command),
+                },
+                {
+                    "name": "set_vel_w",
+                    "value": _double_to_bits(self.flag.yaw_speed_command),
+                },
+            ]
         inner = json.dumps({"events": events})
         return json.dumps({"type": "events", "data": inner})
 
@@ -408,29 +508,40 @@ class WebsocketController:
 
     @staticmethod
     def _cors(response):
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'origin, content-type, accept, x-requested-with'
-        response.headers['Access-Control-Max-Age'] = '3600'
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = (
+            "GET, POST, PUT, DELETE, OPTIONS"
+        )
+        response.headers["Access-Control-Allow-Headers"] = (
+            "origin, content-type, accept, x-requested-with"
+        )
+        response.headers["Access-Control-Max-Age"] = "3600"
         return response
 
     async def _handle_headers(self, request):
-        return self._cors(web.Response(text=self._headers_json,
-                                       content_type='application/json'))
+        return self._cors(
+            web.Response(text=self._headers_json, content_type="application/json")
+        )
 
     async def _handle_stateslist(self, request):
-        return self._cors(web.Response(text=self._states_json,
-                                       content_type='application/json'))
+        return self._cors(
+            web.Response(text=self._states_json, content_type="application/json")
+        )
 
     async def _handle_control_get(self, request):
-        return self._cors(web.Response(text=json.dumps(CONTROL_SETTINGS),
-                                       content_type='application/json'))
+        return self._cors(
+            web.Response(
+                text=json.dumps(CONTROL_SETTINGS), content_type="application/json"
+            )
+        )
 
     async def _handle_index(self, request):
-        body = ("xMIGCS websocket console<br>"
-                f"GET /monitor/headers, /monitor/stateslist, /setting/control/get<br>"
-                f"WS /console")
-        return self._cors(web.Response(text=body, content_type='text/html'))
+        body = (
+            "xMIGCS websocket console<br>"
+            f"GET /monitor/headers, /monitor/stateslist, /setting/control/get<br>"
+            f"WS /console"
+        )
+        return self._cors(web.Response(text=body, content_type="text/html"))
 
     # ---------------------------------------------------------- ws handling
 
@@ -444,16 +555,21 @@ class WebsocketController:
                 if msg.type not in (WSMsgType.TEXT, WSMsgType.BINARY):
                     continue
                 try:
-                    text = msg.data.decode('utf-8', 'ignore') if isinstance(msg.data, bytes) else msg.data
+                    text = (
+                        msg.data.decode("utf-8", "ignore")
+                        if isinstance(msg.data, bytes)
+                        else msg.data
+                    )
                     envelope = json.loads(text)
-                    mtype = envelope.get('type', '')
-                    if mtype == 'request_data':
+                    mtype = envelope.get("type", "")
+                    if mtype == "request_data":
                         await ws.send_str(self._monitor_data_message())
-                    elif mtype == 'events':
-                        inner = json.loads(envelope.get('data', '') or '{}')
-                        for ev in inner.get('events', []):
-                            self.events_queue.put((str(ev.get('name', '')),
-                                                   ev.get('value', 0)))
+                    elif mtype == "events":
+                        inner = json.loads(envelope.get("data", "") or "{}")
+                        for ev in inner.get("events", []):
+                            self.events_queue.put(
+                                (str(ev.get("name", "")), ev.get("value", 0))
+                            )
                     # anything else: ignored, like the ovinf backend
                 except (ValueError, TypeError) as e:
                     print(f"[ws-console] bad message: {e}")
@@ -477,11 +593,11 @@ class WebsocketController:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         app = web.Application()
-        app.router.add_get('/', self._handle_index)
-        app.router.add_get('/monitor/headers', self._handle_headers)
-        app.router.add_get('/monitor/stateslist', self._handle_stateslist)
-        app.router.add_get('/setting/control/get', self._handle_control_get)
-        app.router.add_get('/console', self._handle_console)
+        app.router.add_get("/", self._handle_index)
+        app.router.add_get("/monitor/headers", self._handle_headers)
+        app.router.add_get("/monitor/stateslist", self._handle_stateslist)
+        app.router.add_get("/setting/control/get", self._handle_control_get)
+        app.router.add_get("/console", self._handle_console)
         try:
             self._runner = web.AppRunner(app)
             self._loop.run_until_complete(self._runner.setup())

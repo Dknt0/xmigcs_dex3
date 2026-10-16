@@ -410,5 +410,7 @@ class FSMStateWALKDEPTH(FSMState):
             return FSMStateName.WALKDEPTH
         elif flag.fsm_state_command == "gotoWALKDEPTH100HZ":
             return FSMStateName.WALKDEPTH100HZ
+        elif flag.fsm_state_command == "gotoMULTIAMP":
+            return FSMStateName.MULTIAMP
         else:
             return None

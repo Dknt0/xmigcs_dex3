@@ -536,5 +536,7 @@ class FSMStateWALKAMP(FSMState):
             return FSMStateName.STAND
         elif flag.fsm_state_command == "gotoWALKDEPTH100HZ":
             return FSMStateName.WALKDEPTH100HZ
+        elif flag.fsm_state_command == "gotoMULTIAMP":
+            return FSMStateName.MULTIAMP
         else:
             return None  # 无状态转换
